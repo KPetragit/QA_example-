@@ -17,10 +17,10 @@ The first three files of the script are preparatory files which enable the onwar
 - **1_params.R**
 Central configuration for survey QA and monitoring. Defines asset names, targets, thresholds (response rates, outliers, skips, DK/RF patterns), anthropometric variables, and interview timing for consistent use across all QA and analysis scripts.
 
--**2_funs.R**
+- **2_funs.R**
 Utility functions for Kobo data ingestion and preparation. Includes retrieval of assets by name, flattening/merging of repeat groups, harmonising household roster structures, adding key variables for interview outcomes, and dynamically merging multi-asset datasets. Provides a single data_import() entry point that loads, processes, and caches Kobo survey data for downstream cleaning and QA.
 
--**3_functions**
+- **3_functions**
 A folder, containing two scripts:
 --flat_functions_qa_qmd
 Collection of functions to flag and summarise interview quality issues (completeness, eligibility, refusals, response/contact/cooperation/replacement rates, missing/skipped modules, duplicates, outliers, anthropometry z-scores, module timing). Supports both enumerator- and weekly-level QC, with outputs structured for review tables and QA logs.
@@ -29,17 +29,19 @@ Functions powering the FDS QA dashboard. Includes UI helpers (date slider), prog
 
 2. **Data Improt**
 The second part is the data import directly from KoboToolBox. 
--**4_dataimport.qmd**
+- **4_dataimport.qmd**
 Imports raw Kobo assets, merges multi-language datasets, selects relevant variables, and optimises performance for QA. Saves processed objects locally and publishes them as pins to Posit Connect for downstream analysis and dashboards.
 
 3. **Data preparation and construction of dashboard**
 The third part is the preparation of data. Functions prepared in step 1 are applied to the imported data. Following the actual QA shiny dashboard is created. 
--**5_dataprep.qmd**
+
+- **5_dataprep.qmd**
 Prepares data for the QA dashboard. Loads merged survey data, applies corrections (general + anthropometrics), integrates sample information, derives key indicators (response, refusal, replacement, cooperation), and generates QA outputs (summaries, duplicates, outliers, skips, working hours, anthropometrics, module durations). Produces the qa object, which is pinned to Posit Connect for dashboard use.
 This script also calls on corrections_setup.R, Observations_setup.R and anthro_corrections_setup.R. These separate scripts prepare a workflow which takes the data corrections 
 entered directly into the dashboard, runs the so called corrections through the raw data before a new data preparation cycle starts. This ensure the QA flags that are produced on the dashboard
 contain only non-corrected elements. 
--**6_qa_dashboard.qmd**
+
+- **6_qa_dashboard.qmd**
 Creates the interactive Shiny dashboard for survey QA and monitoring. Displays daily updates on sample progress, interview outcomes, data quality, anthropometrics, enumerator performance, and logged corrections. Integrates secure login, Posit Connect pins, and interactive visualisations (Plotly, Mapboxer, DT).
 
 4. **Other**

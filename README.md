@@ -22,9 +22,11 @@ Utility functions for Kobo data ingestion and preparation. Includes retrieval of
 
 - **3_functions**
 A folder, containing two scripts:
---flat_functions_qa_qmd
+
+**flat_functions_qa_qmd**
 Collection of functions to flag and summarise interview quality issues (completeness, eligibility, refusals, response/contact/cooperation/replacement rates, missing/skipped modules, duplicates, outliers, anthropometry z-scores, module timing). Supports both enumerator- and weekly-level QC, with outputs structured for review tables and QA logs.
---flat_functions_qa_dashboard.qmd 
+
+**flat_functions_qa_dashboard.qmd**
 Functions powering the FDS QA dashboard. Includes UI helpers (date slider), progress and distribution plots, checks for duplicates/outliers, and routines to build team- and enumerator-level QA summaries. Provides visual and tabular outputs for monitoring productivity and data quality in real time.
 
 2. **Data Improt**

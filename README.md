@@ -65,3 +65,5 @@ Other elements in the project contain the needed information for the dashboard d
 | [`anthro_corrections_setup.R`](anthro_corrections_setup.R)    | Workflow for anthropometric corrections    |
 | [`6_qa_dashboard.qmd`](6_qa_dashboard.qmd)            | Shiny dashboard with 93 QA indicators      |
 
+
+Link to repository: [Data Quality Assurance Example - R Shiny app](https://github.com/KPetragit/QA_example-)

@@ -35,4 +35,4 @@ if (file.exists(file_path)) {
 board <- board_connect(auth = "envvar")
 
 # Write the dataframe as a pin
-pin_write(board, corrections, "nice@unhcr.org/FDS_ZAM_anthro_corrections", type = "csv")
+pin_write(board, corrections, "XXX/FDS_ZAM_anthro_corrections", type = "csv")

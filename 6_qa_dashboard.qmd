@@ -1,0 +1,2014 @@
+---
+title: "XXX 2025"
+subtitle: Quality assurance dashboard
+#logo: images/fds_logo.png
+format:
+  dashboard:
+    scrolling: true
+    theme: [cosmo, dashboard_style.scss]
+server: shiny
+resource_files:
+- functions/flat_functions_qa_dashboard.qmd
+- functions/flat_functions_qa.qmd
+---
+
+```{r packages}
+#| context: setup
+
+# Load packages
+if (!requireNamespace("pacman", quietly = TRUE)) {
+  install.packages("pacman")
+}
+
+pacman::p_load(scales, lubridate, haven, labelled, scales, shiny, shinydashboard,
+               shinyWidgets, shinyauthr, shinyjs, tidyverse, fusen, plotly, fusen,
+               unhcrthemes, ggforce, DT, bslib, readr, writexl, pins, sparkline, 
+               leaflet, shinyBS, mapboxer, zscorer, rlang, nipnTK, robotoolbox, extrafont)
+
+# Load other functions for QA checks/figures
+load_flat_functions("3_functions/flat_functions_qa_dashboard.qmd", envir = globalenv())
+load_flat_functions("3_functions/flat_functions_qa.qmd", envir = globalenv())
+```
+
+```{r data_import}
+#| context: setup
+
+# Load data
+board <- board_connect(auth = "envvar")
+qa <- pin_read(board, "XXX.org/FDS_ZAM_QA")
+# 
+# qa <- readRDS("data/qa.rds")
+```
+
+```{r params}
+#| context: setup
+
+# Load parameters. This is a set of thresholds for the qa checks.
+source("1_params.R")
+```
+
+```{r theme}
+#| context: setup
+
+# Colors
+col_line <- unhcr_pal(n = 2, "pal_unhcr")[2]
+col_line2 <- unhcr_pal(n = 2, "pal_red")[1]
+
+col_fill <- unhcr_pal(n = 1, "pal_unhcr")
+```
+
+#  {.sidebar}
+
+![](images/fds_logo.png){width="100%"}
+
+```{r sidebar}
+# Information on last update
+div(textOutput("last_update"), style = 'font-weight: bold;')
+hr()
+# Login credentials
+div(
+  textOutput("login_message"), 
+  style = 'font-weight: bold; padding-bottom: 0;'
+)
+tags$style(HTML("
+  .well { 
+    margin-top: -50px ;
+    padding-top: 5px ;
+  }
+"))
+loginUI(id = "login", title = NULL, user_title = "User", error_message = "")
+hr()
+
+# Checkboxes to select individual teams
+#div(id = "checkboxTeam", sidebarPanel(uiOutput("checkbox_team")))
+```
+
+# Overview
+
+## Row {height="250px"}
+
+### Column {width="250px"}
+
+```{r box-days}
+sparkline_interview_n <- plot_ly(qa$interview_count_day) |>
+    add_lines(
+      x = ~start_date, y = ~interview_count, 
+      line = list(color = col_fill, width = 2),
+      fill = 'tozeroy', alpha = .5) |>
+  layout(
+    xaxis = list(visible = F, showgrid = F, title = ""),
+    yaxis = list(visible = F, showgrid = F, title = ""),
+    hovermode = "x",
+    margin = list(t = 0, r = 0, l = 0, b = 0),
+    font = list(color = "white"),
+    paper_bgcolor = "transparent",
+    plot_bgcolor = "transparent"
+  ) %>%
+  config(displayModeBar = F) %>%
+  htmlwidgets::onRender(
+    "function(el) {
+      el.closest('.bslib-value-box')
+        .addEventListener('bslib.card', function(ev) {
+          Plotly.relayout(el, {'xaxis.visible': ev.detail.fullScreen});
+        })
+    }"
+  )
+
+value_box(
+  value = textOutput("complete_interviews"),
+  title = "Sample completion:",
+  showcase = sparkline_interview_n,
+  showcase_layout = "bottom",
+  theme = "light" )
+```
+
+### Column
+
+```{r plot-interviews_day}
+plotlyOutput("interviews_day")
+```
+
+## Row {height="350px"}
+
+### Column {.tabset} 
+
+```{r plot-sample_targets}
+#| title: "Sample completion by stratum"
+div(DTOutput("sample_targets"), style = "font-size:75%")
+```
+
+```{r plot-progress_stratum}
+#| title: "Complete interviews by stratum"
+plotlyOutput("progress_stratum")
+```
+
+```{r plot-sample_completion_mm}
+#| title: "Sample completion Meheba and Mayukwayukwa"
+div(DTOutput("sample_completion_mm"), style = "font-size:75%")
+```
+
+```{r tab-location_mm}
+#| title: "Location of households from Mayukwayukwa"
+div(DTOutput("location_mm"), style = "font-size:75%")
+```
+
+## Row {height="500px"}
+
+### Column  {width="300px"}
+
+```{r select-sample_completion}
+#| title: "Expected duration"
+
+checkboxGroupInput(
+  "selected_methods",
+  HTML(
+    "<b>Based on assumptions for the number of interviews per day, the chart shows a date range for the expected completion of data collection by stratum:</b><br>"
+  ),
+  choices = unique(qa$combined_means$method),
+  selected = unique(qa$combined_means$method)[1:2],
+  width = "100%"
+)
+```
+
+### Column  
+```{r plot-sample_completion}
+plotlyOutput("completionPlot")
+```
+
+# Outcome
+
+## Row 
+
+```{r plot-map}
+#| title: "Locations of complete interviews (approximate)"
+mapboxerOutput("map_progress")
+```
+
+## Row {.tabset}
+
+```{r plot-active_stratum}
+#| title: "Complete interviews by stratum and week"
+plotOutput("active_stratum")
+```
+
+```{r plot-active_team}
+#| title: "Complete interviews by team and week"
+plotOutput("active_team")
+```
+
+## Row {height="250px"}
+
+### Column {width="150px"}
+
+```{r box-total_submissons}
+value_box(
+  value = textOutput("total_submissons"),
+  theme = "primary",
+  title = "Total submissions:"
+)
+```
+
+### Column {width="150px"}
+
+```{r box-total_complete_interview}
+value_box(
+  value = textOutput("total_complete_interview"),
+  theme = "primary",
+  title = tags$div(
+    "Total complete interviews:",
+    tags$small("Interviews that have been confirmed as complete after data check")
+  )
+)
+
+
+```
+
+### Column {width="150px"}
+
+```{r box-contact_rate}
+# value_box(
+#   value = qa$contact_rate,
+#   theme = "primary",
+#   title = "Contact rate:",
+# )
+```
+
+### Column {width="150px"}
+
+```{r box-response_rate}
+value_box(
+  value = textOutput("response_rate"),
+  theme = "primary",
+  title = "Response rate:",
+)
+```
+
+### Column {width="150px"}
+
+```{r box-cooperation_rate}
+value_box(
+    value = textOutput("cooperation_rate"),
+  theme = "primary",
+  title = "Cooperation rate:",
+)
+```
+
+### Column {width="150px"}
+
+```{r box-refusal_rate}
+value_box(
+  value = textOutput("refusal_rate"),
+  theme = "primary",
+  title = "Refusal rate:"
+)
+```
+
+### Column {width="300px"}
+
+```{r box-replacement_need}
+value_box(
+      value = textOutput("replacement_need"),
+  theme = "primary",
+  title = "Replacement need (% of interviews that need to be replaced:"
+)
+```
+### Column {width="150px"}
+
+```{r box-replacement_rate}
+value_box(
+        value = textOutput("replacement_rate"),
+  theme = "primary",
+  title = "Replacement rate:"
+)
+```
+
+## Row {.tabset}
+
+```{r plot-outcome_stratum}
+#| title: "Interview outcome by stratum"
+plotlyOutput("outcome_stratum")
+```
+
+```{r plot-replacements_stratum}
+#| title: "Main/replacement sample"
+plotlyOutput("replacements_stratum")
+```
+
+## Row {height="150px"}
+
+### Column {width="150px"}
+
+```{r box-dupl_Intro_06}
+value_box(
+  value = textOutput("dupl_Intro_06_n"),
+  theme = "light",
+  title = "Duplicate IDs:"
+)
+```
+
+### Column {width="150px"}
+
+```{r box-dupl_Intro_17}
+value_box(
+  value = textOutput("dupl_Intro_17_n"),
+  theme = "light",
+  title = "Duplicate validation codes for replacements:"
+)
+```
+
+### Column {width="150px"}
+
+```{r box-dupl_Intro_18}
+value_box(
+  value = textOutput("dupl_Intro_18_n"),
+  theme = "light",
+  title = "Duplicate sample IDs for replacements:"
+)
+```
+
+# Data quality
+
+## Row {height="250px"}
+
+### Column {width=120px}
+
+```{r box-current_version_nyanja}
+# sparkline_version_nyanja <- plot_ly(qa$version_time |> filter(source == "Nyanja")) |>
+#       arrange(start_date) |>
+#     add_lines(
+#       x = ~start_date, y = ~version_num, 
+#       line = list(color = col_fill, width = 2),
+#       fill = 'tozeroy', alpha = .5) |>
+#   layout(
+#     xaxis = list(visible = F, showgrid = F, title = ""),
+#     yaxis = list(visible = F, showgrid = F, title = ""),
+#     hovermode = "x",
+#     margin = list(t = 0, r = 0, l = 0, b = 0),
+#     font = list(color = "white"),
+#     paper_bgcolor = "transparent",
+#     plot_bgcolor = "transparent"
+#   ) %>%
+#   config(displayModeBar = F) %>%
+#   htmlwidgets::onRender(
+#     "function(el) {
+#       el.closest('.bslib-value-box')
+#         .addEventListener('bslib.card', function(ev) {
+#           Plotly.relayout(el, {'xaxis.visible': ev.detail.fullScreen});
+#         })
+#     }"
+#   )
+
+value_box(
+  value = textOutput("current_version_nyanja"),
+  title = "Current form version Nyanja:",
+  #showcase = sparkline_version_nyanja,
+  showcase_layout = "bottom",
+  theme = "light" )
+```
+### Column {width=120px}
+
+```{r box-current_version_bemba}
+# sparkline_version_bemba <- plot_ly(qa$version_time |> filter(source == "Bemba")) |>
+#       arrange(start_date) |>
+#     add_lines(
+#       x = ~start_date, y = ~version_num, 
+#       line = list(color = col_fill, width = 2),
+#       fill = 'tozeroy', alpha = .5) |>
+#   layout(
+#     xaxis = list(visible = F, showgrid = F, title = ""),
+#     yaxis = list(visible = F, showgrid = F, title = ""),
+#     hovermode = "x",
+#     margin = list(t = 0, r = 0, l = 0, b = 0),
+#     font = list(color = "white"),
+#     paper_bgcolor = "transparent",
+#     plot_bgcolor = "transparent"
+#   ) %>%
+#   config(displayModeBar = F) %>%
+#   htmlwidgets::onRender(
+#     "function(el) {
+#       el.closest('.bslib-value-box')
+#         .addEventListener('bslib.card', function(ev) {
+#           Plotly.relayout(el, {'xaxis.visible': ev.detail.fullScreen});
+#         })
+#     }"
+#   )
+
+value_box(
+  value = textOutput("current_version_bemba"),
+  title = "Current form version Bemba:",
+  #showcase = sparkline_version_bemba,
+  showcase_layout = "bottom",
+  theme = "light" )
+```
+### Column {width=120px}
+
+```{r box-current_version_frenchswahili}
+# sparkline_version_frenchswahili <- plot_ly(qa$version_time |> filter(source == "French/Swahili")) |>
+#       arrange(start_date) |>
+#     add_lines(
+#       x = ~start_date, y = ~version_num, 
+#       line = list(color = col_fill, width = 2),
+#       fill = 'tozeroy', alpha = .5) |>
+#   layout(
+#     xaxis = list(visible = F, showgrid = F, title = ""),
+#     yaxis = list(visible = F, showgrid = F, title = ""),
+#     hovermode = "x",
+#     margin = list(t = 0, r = 0, l = 0, b = 0),
+#     font = list(color = "white"),
+#     paper_bgcolor = "transparent",
+#     plot_bgcolor = "transparent"
+#   ) %>%
+#   config(displayModeBar = F) %>%
+#   htmlwidgets::onRender(
+#     "function(el) {
+#       el.closest('.bslib-value-box')
+#         .addEventListener('bslib.card', function(ev) {
+#           Plotly.relayout(el, {'xaxis.visible': ev.detail.fullScreen});
+#         })
+#     }"
+#   )
+
+value_box(
+  value = textOutput("current_version_frenchswahili"),
+  title = "Current form version French/ Swahili:",
+  #showcase = sparkline_version_frenchswahili,
+  showcase_layout = "bottom",
+  theme = "light" )
+```
+
+### Column
+
+```{r tab-version}
+#| title: "Enumerators using old form versions in the past 7 days"
+div(DTOutput("version"), style = "font-size:75%")
+```
+
+## Row {.tabset height="300px"}
+
+```{r plot-dem_size}
+#| title: "Distribution of household size"
+plotlyOutput("plot_dem_size")
+```
+
+```{r plot-dem_age}
+#| title: "Distribution of respondent's age"
+plotlyOutput("plot_dem_age")
+```
+
+```{r plot-dem_sex}
+#| title: "Distribution of respondent's sex"
+plotlyOutput("plot_dem_sex")
+```
+
+```{r tab-outlier_dem}
+#| title: "Outliers in key demographic variables"
+div(DTOutput("outlier_dem"), style = "font-size:75%")
+```
+
+```{r tab-summary_dem}
+#| title: "Summary of demographic variables"
+#div(DTOutput("dem_tab"), style = "font-size:75%")
+```
+
+## Row {height="300px"}
+
+```{r tab-hhsize_time}
+#| title: "Mean household size by survey week"
+plotlyOutput("hhsize_time")
+```
+
+```{r tab-coo_distribution}
+#| title: "Country of origin"
+plotlyOutput("coo_distribution")
+```
+## Row {height="300px"}
+
+```{r tab-outlier_num}
+#| title: "Outliers in numeric variables"
+ div(DTOutput("outlier_num"), style = "font-size:75%")
+```
+
+## Row {.tabset height="300px"}
+
+```{r tab-dupl_name}
+#| title: "Duplicate names within households"
+div(DTOutput("dupl_name"), style = "font-size:75%")
+```
+
+```{r tab-dupl_telHoH}
+#| title: "Duplicate phone number"
+div(DTOutput("dupl_telHoH"), style = "font-size:75%")
+```
+
+```{r tab-dupl_ScProtec02}
+#| title: Duplicate social protection programme
+div(DTOutput("dupl_ScProtec02"), style = "font-size:75%")
+```
+
+```{r tab-dupl_currentplot}
+#| title: "Duplicate plot name"
+div(DTOutput("dupl_currentplot"), style = "font-size:75%")
+```
+
+# Performance
+
+## Row {.tabset height="300px"}
+
+```{r plot-p_daily_ave_int_week_group}
+#| title: "Daily average complete interviews by week"
+plotlyOutput("p_daily_ave_int_week_group")
+```
+
+
+```{r plot-p_daily_ave_int_week}
+#| title: "Daily average complete interviews by enumerator and week"
+plotlyOutput("p_daily_ave_int_week")
+```
+
+```{r tab-daily_ave_int_week}
+#| title: "Daily average complete interviews by enumerator and week"
+div(DTOutput("daily_ave_int_week"), style = "font-size:75%")
+```
+
+## Row {height="300px"}
+
+```{r tab-enum_response_rate, eval=FALSE}
+##| title: Flagged enumerators based on response rate
+div(DTOutput("enum_response_rate"), style = "font-size:75%")
+```
+
+```{r tab-enum_refusal_rate, eval=FALSE}
+##| title: Flagged enumerators based on refusal rate
+div(DTOutput("enum_refusal_rate"), style = "font-size:75%")
+```
+
+## Row {.tabset height="300px"}
+
+```{r tab-enumerator_summary}
+#| title: "Enumerator summary"
+div(DTOutput("enumerator_dt"), style = "font-size:75%")
+```
+
+```{r tab-team_summary}
+#| title: "Team summary"
+div(DTOutput("team_dt"), style = "font-size:75%")
+```
+
+## Row {height="300px"}
+
+```{r tab-duration_enum, eval=FALSE}
+ #| title: "Duration"
+div(DTOutput("duration_enum"), style = "font-size:75%") 
+```
+
+
+## Row {height="300px"}
+
+```{r tab-outlier_response}
+#| title: "Enumerators with most frequent cases of DK or RF and enumerators with fewest cases of other/specify"
+div(DTOutput("outlier_response"), style = "font-size:75%")
+```
+
+## Row {height="200px"}
+
+```{r tab-skips}
+#| title: "Enumerators with skips in key modules"
+div(DTOutput("skips"), style = "font-size:75%")
+```
+
+## Row {height="400px"}
+
+### Column {.tabset width="60%"}
+
+```{r plot-working_hours}
+#| title: "Interview start time"
+plotOutput("plot_working_hours")
+```
+
+```{r tab-outside_working_hours}
+#| title: "Interviews outside working hours (8:00-18:00)"
+div(DTOutput("outside_working_hours"), style = "font-size:75%")
+```
+
+### Column {width="40%"}
+
+```{r tab-handwashing_ob}
+#| title: "Frequent skips for observed handwashing facility"
+div(DTOutput("handwashing_ob"), style = "font-size:75%")
+```
+
+# Anthropometrics
+
+## Row {.tabset height="200px"}
+
+```{r plot-anthro}
+#| title: "Distribution of anthropometric variables"
+plotlyOutput("plot_anthro")
+```
+
+```{r plot-anthro_sex}
+#| title: "Sex of selected child"
+plotlyOutput("plot_anthro_sex")
+```
+
+## Row {.tabset height="200px"}
+
+```{r plot-anthro_z_hfa}
+#| title: "Height-for-age"
+plotlyOutput("plot_anthro_z_hfa")
+```
+
+```{r plot-anthro_z_lfa}
+#| title: "Length-for-age"
+plotlyOutput("plot_anthro_z_lfa")
+```
+
+```{r plot-anthro_z_wfa}
+#| title: "Weight-for-age"
+plotlyOutput("plot_anthro_z_wfa")
+```
+
+```{r plot-anthro_z_wfh}
+#| title: "Weight-for-height"
+plotlyOutput("plot_anthro_z_wfh")
+```
+
+```{r plot-anthro_z_wfl}
+#| title: "Weight-for-length"
+plotlyOutput("plot_anthro_z_wfl")
+```
+
+```{r plot-anthro_z_mfa}
+#| title: "MUAC-for-age"
+plotlyOutput("plot_anthro_z_mfa")
+```
+
+## Row
+```{r print-digit_preference}
+#| title: "Comparison of child's age with/without official document: Digit preference"
+verbatimTextOutput("digit_preference_no_doc")
+verbatimTextOutput("digit_preference_doc")
+```
+
+```{r print-ttest}
+#| title: "Comparison of child's age with/without official document: t test"
+verbatimTextOutput("t_test")
+```
+
+# Duration
+
+## Row
+```{r plot-interview_timings_week}
+#| title: "Gross interview duration (in minutes)"
+plotlyOutput("plot_interview_times_week")
+```
+
+## Row
+```{r plot-timings_week}
+#| title: "Questionnaire duration by week (in minutes)"
+plotlyOutput("plot_module_times_week")
+```
+
+## Row
+```{r tab-timings_outliers}
+##| title: "Outliers in module duration by week"
+#div(DTOutput("outlier_time"), style = "font-size:75%")
+```
+
+## Row
+```{r tab-duration_modules}
+#| title: "Module durations by week (in minutes)"
+div(DTOutput("modules_time_week_table"), style = "font-size:75%")
+```
+
+# Corrections
+
+## Row {height="150px"}
+
+### Column
+```{r}
+value_box(
+  value = textOutput("corrections_logged"),
+  title = "Logged corrections (refresh page to update):",
+  theme = "success",
+  showcase = bsicons::bs_icon("cloud-upload"))
+```
+
+### Column
+
+```{r}
+value_box(
+  value = textOutput("corrections_pending"),
+  title = "Pending corrections:",
+  theme = "warning",
+  showcase = bsicons::bs_icon("clipboard"))
+```
+
+
+## Row {height="750px"}
+```{r}
+#| title: "Double click on the cell in the column 'correctedValue' to enter corrections and set the value in 'completed' to 'Yes'. Then click the button below to submit"
+# selectInput("enumerator", "Select Enumerator", choices = c("All", unique(qa$corrections$enumerator)))
+# 
+# selectInput("team", "Select Team", choices = c("All", unique(qa$corrections$team)))
+
+div(DTOutput("corrections"), style = "font-size:75%")
+```
+
+## Row {height="100px"}
+
+```{r}
+actionBttn(
+    inputId = "logCorrections",
+    label = "Submit complete corrections",
+    style = "simple", # Other options: "bordered", "minimal", "simple", "stretch", "jelly", "gradient", "unite"
+    color = "primary", # Other options: "primary", "warning", "danger", "info", "royal", "default"
+    size = "lg" # Other options: "xs", "sm", "md"
+  )
+```
+
+## Row {height="80px"}
+### Column
+```{r}
+downloadButton("downloadCompleteCorrections", "Download complete corrections")
+```
+
+### Column
+```{r}
+downloadButton("downloadPendingCorrections", "Download pending corrections")
+```
+
+
+# Anthropometrics corrections
+
+## Row {height="150px"}
+
+### Column
+```{r}
+value_box(
+  value = textOutput("anthro_corrections_logged"),
+  title = "Logged anthro corrections (refresh page to update):",
+  theme = "success",
+  showcase = bsicons::bs_icon("cloud-upload"))
+```
+
+### Column
+
+```{r}
+value_box(
+  value = textOutput("anthro_corrections_pending"),
+  title = "Pending anthro corrections:",
+  theme = "warning",
+  showcase = bsicons::bs_icon("clipboard"))
+```
+
+
+## Row {height="750px"}
+```{r}
+#| title: "Double click on the cell to enter corrections and enter 'Yes' in the column 'corrected'. Then click on the button below to submit"
+# selectInput("enumerator", "Select Enumerator", choices = c("All", unique(qa$corrections$enumerator)))
+ 
+# selectInput("team", "Select Team", choices = c("All", unique(qa$corrections$team)))
+
+div(DTOutput("anthro_corrections"), style = "font-size:75%")
+```
+
+## Row {height="100px"}
+
+```{r}
+actionBttn(
+    inputId = "logAnthroCorrections",
+    label = "Submit complete anthro corrections",
+    style = "simple", # Other options: "bordered", "minimal", "simple", "stretch", "jelly", "gradient", "unite"
+    color = "primary", # Other options: "primary", "warning", "danger", "info", "royal", "default"
+    size = "lg" # Other options: "xs", "sm", "md"
+  )
+```
+
+## Row {height="100px"}
+### Column
+```{r}
+downloadButton("downloadCompleteAnthroCorrections", "Download complete anthro corrections")
+```
+
+### Column
+```{r}
+downloadButton("downloadPendingAnthroCorrections", "Download pending anthro corrections")
+```
+
+
+
+# Observations 
+
+## Row {height="150px"}
+
+### Column
+```{r}
+value_box(
+  value = textOutput("observations_logged"),
+  title = "Logged observations (refresh page to update):",
+  theme = "success",
+  showcase = bsicons::bs_icon("cloud-upload"))
+```
+
+### Column
+
+```{r}
+value_box(
+  value = textOutput("observations_pending"),
+  title = "Pending observations:",
+  theme = "warning",
+  showcase = bsicons::bs_icon("clipboard"))
+```
+
+
+## Row {height="750px"}
+```{r}
+#| title: "Review the log. Then set 'completed' to 'Yes' and click on the button below to submit"
+div(DTOutput("observations"), style = "font-size:75%")
+```
+
+## Row {height="100px"}
+
+```{r}
+actionBttn(
+    inputId = "logObservations",
+    label = "Submit complete observations",
+    style = "simple", # Other options: "bordered", "minimal", "simple", "stretch", "jelly", "gradient", "unite"
+    color = "primary", # Other options: "primary", "warning", "danger", "info", "royal", "default"
+    size = "lg" # Other options: "xs", "sm", "md"
+  )
+```
+
+## Row {height="80px"}
+### Column
+```{r}
+downloadButton("downloadCompleteObservations", "Download complete observations")
+```
+
+### Column
+```{r}
+downloadButton("downloadPendingObservations", "Download pending observations")
+```
+
+# Data 
+
+## Row {height="80px"}
+### Column
+```{r}
+downloadButton("downloadAnthroData", "Download anthro data")
+```
+
+## Row {height="80px"}
+### Column
+```{r}
+downloadButton("downloadAnthroDataENA", "Download anthro data for ENA software")
+```
+
+## Row {height="80px"}
+### Column
+
+```{r}
+downloadButton("downloadcompleteweekstratum", "Download table with complete interviews per week and stratum")
+```
+
+# About {#sec-about}
+
+## Row {.fill}
+
+### Column {width = 70%}
+
+## Row {.fill}
+
+::: card
+::: card-header
+About the dashboard
+:::
+
+::: card-body
+The QA dashboard presents indicators on survey progress, interview outcomes, data quality, and enumerator performance. This information gives an overview of how the survey is advancing, as well as flagging cases that need to be reviewed and potentially corrected.
+
+The dashboard updates daily with data uploaded to Kobo at 02:00 CET.
+
+For questions or feedback, please contact [Petra Kaps](mailto:XXX) in the XXX.
+:::
+:::
+
+### Column {width = 30%}
+
+```{r}
+#| title: "Pipeline for quality checks"
+
+flowchart <- readRDS("flowchart.rds")
+flowchart
+```
+
+## Row {.fill}
+
+**Indicator glossary**
+
+`r read_file("text/indicator_definitions.txt")`
+
+
+```{r server_credentials}
+#| context: server
+
+# Usernames and passwords are stored in .Renviron
+user_base <- tibble::tibble(
+  user = c(Sys.getenv("USER1"), Sys.getenv("USER2")),
+  password = c(Sys.getenv("PASSWORD1"), Sys.getenv("PASSWORD2")),
+  permissions = c("admin", "standard"),
+  name = c("FDS team", "MINSANTE")
+)
+
+credentials <- loginServer(
+  id = "login",
+  data = user_base,
+  user_col = user,
+  pwd_col = password,
+)
+
+# Create a secure wrapper for different rendering functions for elements requiring authentification
+# For regular plots
+secure_renderPlot <- function(expr) {
+  renderPlot({
+    if (!isTruthy(credentials()$user_auth)) {
+      plot.new()
+      text(0.5, 0.5, "Log in to access all dashboard elements", cex = 1.2)
+    } else {
+      expr
+    }
+  })
+}
+
+# For plotly plots
+secure_renderPlotly <- function(expr) {
+  renderPlotly({
+    if (!isTruthy(credentials()$user_auth)) {
+      plot_ly() %>%
+        add_annotations(
+          text = "Log in to access all dashboard elements",
+          x = 0.5,
+          y = 0.5,
+          showarrow = FALSE
+        )
+    } else {
+      expr
+    }
+  })
+}
+
+# For Mapboxer plots
+secure_renderMapboxer <- function(expr) {
+  renderMapboxer({
+    if (!isTruthy(credentials()$user_auth)) {
+    mapboxer(
+      center = params$map_coord,
+      zoom = 4.5,
+      style = "mapbox://styles/unhcr/ckvl4xy2mj45z15mpkq6w2nv8"
+    ) %>%
+        add_annotations(
+          text = "Log in to access all dashboard elements",
+          x = 0.5,
+          y = 0.5,
+          showarrow = FALSE
+        )
+    } else {
+      expr
+    }
+  })
+}
+
+# For DataTables
+secure_renderDT <- function(expr) {
+  renderDT({
+    if (!isTruthy(credentials()$user_auth)) {
+      datatable(data.frame(Message = "Log in to access all dashboard elements"))
+    } else {
+      expr
+    }
+  })
+}
+
+# For reactive values
+secure_reactive <- function(expr) {
+  reactive({
+    if (!isTruthy(credentials()$user_auth)) {
+      "Log in to access all dashboard elements"
+    } else {
+      expr
+    }
+  })
+}
+
+# For printed output
+secure_renderPrint <- function(expr) {
+  renderPrint({
+    if (!isTruthy(credentials()$user_auth)) {
+      cat("Log in to access all dashboard elements")
+    } else {
+      expr
+    }
+  })
+}
+
+# For download handlers
+secure_downloadHandler <- function(filename_func, content_func) {
+  downloadHandler(
+    filename = function() {
+      if (!isTruthy(credentials()$user_auth)) {
+        return(NULL)
+      } else {
+        filename_func()
+      }
+    },
+    content = function(file) {
+      if (!isTruthy(credentials()$user_auth)) {
+        writeLines("Log-in to download the file", file)
+      } else {
+        content_func(file)
+      }
+    }
+  )
+}
+
+```
+
+```{r server_reactive_tbls}
+#| context: server
+
+# Define reactive tables
+filter_reactive <- function(df) {
+  df_pw <- df
+  df_pw #%>%
+    #filter(
+      #start_date >= input$date_range[1] & start_date <= input$date_range[2]
+      #Intro_01a_c %in% input$team_checkboxes
+#)
+}
+
+
+# r_hhroster <- reactive({
+#   df_l$hhroster |>
+#     filter_reactive()
+# })
+# 
+# r_ScProtec02 <- reactive({
+#   df_l$ScProtec02_group |>
+#     filter_reactive()
+# })
+# 
+# r_plot_roster_info <- reactive({
+#   df_l$plot_roster_info |>
+#     filter_reactive()
+# })
+
+# corrections_anthro <- reactive({
+#    df_l$corrections_anthro |>
+#     filter(start_date >= input$date_range[1] & start_date <= input$date_range[2])
+# })
+```
+
+```{r server_sidebar}
+#| context: server
+
+# Log in message
+  output$login_message <- reactive(
+    if (!credentials()$user_auth) {
+      ("Enter credentials:")
+    } else {
+      ("Log-in successful")
+    }
+  )
+
+# Date/time of last update
+  output$last_update <- reactive({
+    paste0("Last update: ", qa$last_update, "\n\nDay ", qa$days_since_begin, " of data collection")
+  })
+
+```
+
+
+```{r server_overview}
+#| context: server
+
+# Overview tab
+
+# Value box
+output$days_since_begin <- reactive({ qa$days_since_begin })
+
+# Complete interviews
+output$complete_interviews <- reactive({ qa$complete_interviews })
+
+output$target_r <- reactive({ target })
+
+# Progress by stratum linechart
+output$progress_stratum <- renderPlotly({
+  ggplotly(
+    qa$progress_stratum
+  )
+})
+
+# Progress by stratum table
+output$sample_targets <- renderDT({
+  datatable(
+    qa$sample_targets, 
+    options = list(
+      paging = FALSE,
+      dom = 't'
+    )
+  ) %>%
+    formatStyle(
+      'stratum',
+      target = 'row',
+      fontWeight = styleEqual("Total", 'bold') 
+    )
+})
+
+
+# Sample completion Meheba and Mayukwayukwa 
+output$sample_completion_mm <- renderDT({
+  datatable(
+    qa$sample_completion_mm,
+    options = list(
+      paging = FALSE,
+      dom = 't'
+    ),
+    rownames = FALSE,
+    escape = FALSE
+  ) %>%
+    formatStyle(
+      'Stratum',
+      target = 'row',
+      fontWeight = styleEqual(
+        c("<b>Meheba Settlement</b>", "<b>Mayukwayukwa Settlement</b>"),
+        rep("bold", 2)
+      )
+    )
+})
+
+# Complete interviews by location form MYK proGres sample
+output$location_mm <- renderDT({
+  datatable(
+    qa$location_mm,
+    options = list(
+      paging = FALSE,
+      dom = 't'
+    ),
+    rownames = FALSE,
+    escape = FALSE
+  ) 
+    
+})
+
+# Interviews by day
+output$interviews_day <- renderPlotly({qa$interviews_day})
+
+# Expected completion
+output$completionPlot <- renderPlotly({
+    today_date <- as.Date(Sys.Date())
+    
+    # Calculate min and max dates by method
+    date_summary <- qa$combined_means %>%
+      filter(method %in% input$selected_methods) %>%
+      group_by(stratum) %>%
+      summarise(
+        min_date = min(expected_completion_date),
+        max_date = max(expected_completion_date)
+      )
+    
+    filtered_data <- qa$combined_means %>%
+      filter(method %in% input$selected_methods) %>%
+      left_join(date_summary, by = "stratum")
+    
+    ggplot(filtered_data, aes(x = stratum, y = expected_completion_date, color = method)) +
+      geom_line(aes(x = stratum, y = expected_completion_date, group = stratum), color = "#666666", size = 1) +
+      geom_point(size = 3) +
+      geom_hline(yintercept = as.numeric(today_date), color = "#EF4A60", linetype = "dashed", size = 1) +
+      annotate("text", x = 1, y = today_date+2, label = "Today", color = "#EF4A60") +
+      geom_text(aes(
+        x = stratum, 
+        y = max(expected_completion_date) + 10, 
+        label = paste0(format(min_date, "%b %d"), "-", format(max_date, "%b %d"))
+      ), 
+        hjust = -0.1, 
+        vjust = -1, 
+        size = 3, 
+        color = "black"
+      ) +
+      labs(
+        title = "",
+        x = "",
+        y = ""
+      ) +
+      theme_minimal() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5)
+      ) +
+      scale_y_date(limits = c(Sys.Date() - 5, max(filtered_data$expected_completion_date) + 15)) +
+      coord_flip() +
+      scale_color_unhcr_d() + 
+      theme_unhcr(grid = "X", legend = FALSE) 
+})
+```
+
+```{r server_outcome}
+#| context: server
+
+# Outcome tab
+
+# # Map of interview locations. First need to add MAPBOX credentials to .Renviron
+output$map_progress <- secure_renderMapboxer({
+  qa$map_data %>% 
+    as_mapbox_source(
+      cluster = TRUE,
+      clusterMaxZoom = 7,
+      clusterRadius = 10,
+      clusterProperties = list(sumHHs = list("+", c("get", "hhs"))),
+      lng = "Final_04_longitude",
+      lat = "Final_04_latitude"
+    ) %>%
+    mapboxer(
+      center = params$map_coord,
+      zoom = 4.5,
+      style = "mapbox://styles/unhcr/ckvl4xy2mj45z15mpkq6w2nv8"
+    ) %>%
+    add_circle_layer(
+      id = "clustered",
+      circle_radius = list(
+        "step", c("get", "point_count"),
+        5, 10,
+        7, 25,
+        10, 50,
+        12, 100,
+        15, 200,
+        20, 500,
+        25
+      ),
+      circle_color = "#777777",  # Gray color for clusters
+      filter = c("has", "point_count")
+    ) %>%
+    add_circle_layer(
+      id = "unclustered",
+      filter = list("!", c("has", "point_count")),
+      circle_color = c("get", "color"),  # This will use your color column
+      circle_radius = 3,
+      popup = "Household ID: {{Intro_06}}</br>{{Intro_07_lbl}}</br>Sample: {{replacement}}</br>Interview date: {{start_date}}"
+    )
+})
+
+# Heatmap teams/complete interviews
+output$active_team <- secure_renderPlot({qa$active_team})
+
+# Heatmap teams/complete interviews
+output$active_stratum <- secure_renderPlot({qa$active_stratum})
+
+# Value refusal rate
+#output$refusal_rate <- secure_reactive({qa$refusal_rate})
+
+# Interview outcome by stratum
+
+output$outcome_stratum <- secure_renderPlotly({
+ ggplotly(qa$outcome_stratum, tooltip = "text")
+})
+
+# Total submissions
+output$total_submissons <- secure_reactive({ qa$total_submissons })
+
+# Total complete interviews
+output$total_complete_interview <- secure_reactive({ qa$total_complete_interview })
+
+# Rates for value boxes
+output$response_rate <- secure_reactive({ qa$response_rate })
+output$cooperation_rate <- secure_reactive({ qa$cooperation_rate })
+output$refusal_rate <- secure_reactive({ qa$refusal_rate })
+output$replacement_need <- secure_reactive({ qa$replacement_need })
+output$replacement_rate <- secure_reactive({ qa$replacement_rate })
+
+# Replacements by team
+output$replacements_stratum <- secure_renderPlotly(ggplotly(qa$replacements_stratum, tooltip = "text"))
+
+# Count duplicates for value boxes
+output$dupl_Intro_06_n <- secure_reactive({ qa$dupl_Intro_06_n })
+output$dupl_Intro_17_n <- secure_reactive({ qa$dupl_Intro_17_n })
+output$dupl_Intro_18_n <- secure_reactive({ qa$dupl_Intro_18_n })
+```
+
+```{r server_data-quality}
+#| context: server
+
+# Data quality
+output$missing <- secure_renderDT({datatable(qa$missing)})
+
+output$current_version_bemba <- secure_reactive({qa$current_version |> filter(source == "Bemba") |> pull(max_version)})
+output$current_version_nyanja <- secure_reactive({qa$current_version |> filter(source == "Nyanja") |> pull(max_version)})
+output$current_version_frenchswahili <- secure_reactive({qa$current_version |> filter(source == "French/Swahili") |> pull(max_version)})
+
+output$version <- secure_renderDT({
+  req(qa$version, cancelOutput = TRUE)
+  datatable(
+    qa$version,
+    options = list(paging = FALSE, dom = 't'),
+    rownames = FALSE
+  )
+})
+
+
+output$dupl_Intro_06 <- secure_renderDT({datatable(qa$dupl_Intro_06)})
+
+output$dupl_Intro_17 <- secure_renderDT({datatable(qa$dupl_Intro_17)})
+
+output$dupl_Intro_18 <- secure_renderDT({datatable(qa$dupl_Intro_18)})
+
+output$dupl_name <- secure_renderDT({
+  datatable(
+    qa$dupl_HH01b,
+    options = list(paging = FALSE, dom = 't'),
+    rownames = FALSE
+  )
+})
+
+output$dupl_telHoH <- secure_renderDT({
+  datatable(
+    qa$dupl_telHoH,
+    options = list(paging = FALSE, dom = 't'),
+    rownames = FALSE
+  )
+})
+
+output$dupl_ScProtec02 <- secure_renderDT({
+  datatable(
+    qa$dupl_ScProtec02,
+    options = list(paging = FALSE, dom = 't'),
+    rownames = FALSE
+  )
+})
+
+output$dupl_currentplot <- secure_renderDT({
+  datatable(
+    qa$dupl_currentplot,
+    options = list(paging = FALSE, dom = 't'),
+    rownames = FALSE
+  )
+})
+
+
+output$hhsize_time <- secure_renderPlotly(ggplotly({qa$hhsize_time}))
+
+output$coo_distribution <- secure_renderPlotly({
+  ggplotly(qa$p_origincountry, tooltip = "text")
+})
+
+output$outlier_num <- secure_renderDT({
+  datatable(
+    qa$outlier_num,
+    options = list(paging = FALSE, dom = 't'),
+    rownames = FALSE
+  )
+})
+
+```
+
+
+```{r server_progress}
+#| context: server
+
+# Progress
+
+output$dupl_Intro_06 <- secure_renderDT({datatable(qa$dupl_Intro_06)})
+
+output$expected_duration <- secure_renderDT({datatable(qa$expected_duration)})
+
+output$plot_expected_duration_simp <- secure_renderPlotly({ggplotly(qa$plot_expected_duration_simp)})
+
+output$plot_expected_duration <- secure_renderPlotly({ggplotly(qa$plot_expected_duration)})
+```
+
+```{r server_performance}
+#| context: server
+
+# Performance 1
+
+output$enum_response_rate <- secure_renderDT({datatable(qa$enum_response_rate)})
+
+
+output$enum_refusal_rate <- secure_renderDT({datatable(qa$enum_refusal_rate)})
+
+output$daily_ave_int_week <- secure_renderDT({
+  datatable(
+    qa$daily_ave_int_week
+  )
+})
+
+output$p_daily_ave_int_week_group <- secure_renderPlotly({qa$p_daily_ave_int_week_group})
+
+output$p_daily_ave_int_week <- secure_renderPlotly({ggplotly(qa$p_daily_ave_int_week, tooltip = "text")})
+
+output$enumerator_dt <- secure_renderDT({
+  datatable(
+    qa$enumerator_summary
+  )
+})
+
+output$team_dt <- secure_renderDT({
+  datatable(
+    qa$team_summary
+  )
+})
+
+output$outlier_dem <- secure_renderDT({
+  datatable(
+    qa$outlier_dem,
+    options = list(paging = FALSE, dom = 't'),
+    rownames = FALSE
+  )
+})
+
+
+output$outlier_response <- secure_renderDT({datatable(qa$outlier_response)})
+
+output$plot_dem_age <- secure_renderPlotly({ggplotly(qa$plot_dem_age)})
+
+output$plot_dem_size <- secure_renderPlotly({ggplotly(qa$plot_dem_size)})
+
+output$dem_tab <- secure_renderDT({datatable(df_dem_tab)})
+
+output$plot_dem_sex <- secure_renderPlotly({ggplotly(qa$plot_dem_sex)})
+
+# output$duration_enum <- renderDT({
+#   datatable(
+#     df_duration_net |> duration_tab()
+#   )
+# })
+
+output$skips <- secure_renderDT({datatable(qa$check_skip_all)})
+
+output$outside_working_hours <- secure_renderDT({datatable(qa$outside_working_hours)})
+
+output$plot_working_hours <- secure_renderPlot({qa$plot_working_hours})
+
+output$handwashing_ob <- secure_renderDT({datatable(qa$handwashing_ob)})
+
+```
+
+
+```{r server_performance-2, eval=FALSE}
+##| context: server
+
+# Performance 2 tab
+
+#output$outlier_response <- secure_renderDT({datatable(qa$outlier_response)})
+
+#output$plot_dem_age <- secure_renderPlotly({ggplotly(qa$plot_dem_age)})
+
+#output$plot_dem_size <- secure_renderPlotly({ggplotly(qa$plot_dem_size)})
+
+#output$dem_tab <- secure_renderDT({datatable(df_dem_tab)})
+
+#output$plot_dem_sex <- secure_renderPlotly({ggplotly(qa$plot_dem_sex)})
+
+# output$duration_enum <- renderDT({
+#   datatable(
+#     df_duration_net |> duration_tab()
+#   )
+# })
+
+#output$skips <- secure_renderDT({datatable(qa$check_skip_all)})
+
+#output$outside_working_hours <- secure_renderDT({datatable(qa$outside_working_hours)})
+
+#output$plot_working_hours <- secure_renderPlot({qa$plot_working_hours})
+
+#output$handwashing_ob <- secure_renderDT({datatable(qa$handwashing_ob)})
+```
+
+```{r server_anthro}
+#| context: server
+
+# Anthro tab
+
+output$plot_anthro <- secure_renderPlotly({
+  ggplotly(qa$plot_anthro)
+})
+  
+  output$plot_anthro_sex <- secure_renderPlotly({
+  ggplotly(ggplotly(qa$plot_anthro_sex))
+})
+
+output$plot_anthro_z_hfa <- secure_renderPlotly({
+  ggplotly(qa$plot_anthro_z_hfa)
+})
+
+output$plot_anthro_z_lfa <- secure_renderPlotly({
+  ggplotly(qa$plot_anthro_z_lfa)
+})
+
+output$plot_anthro_z_wfa <- secure_renderPlotly({
+  ggplotly(qa$plot_anthro_z_wfa)
+})
+
+output$plot_anthro_z_wfh <- secure_renderPlotly({
+  ggplotly(qa$plot_anthro_z_wfh)
+})
+
+output$plot_anthro_z_wfl <- secure_renderPlotly({
+  ggplotly(qa$plot_anthro_z_wfl)
+})
+
+output$plot_anthro_z_mfa <- secure_renderPlotly({
+  ggplotly(qa$plot_anthro_z_mfa)
+})
+
+output$digit_preference_no_doc <- secure_renderPrint({
+  qa$digit_preference_no_doc
+})
+
+output$digit_preference_doc <- secure_renderPrint({
+  qa$digit_preference_doc
+})
+
+output$t_test <- secure_renderPrint({
+  qa$t_test
+})
+```
+
+```{r server_timings}
+#| context: server
+
+# Plot of gross interview duration by week
+output$plot_interview_times_week <- secure_renderPlotly({
+  ggplotly(qa$interview_times_week)
+})
+
+# Plot of module duration by week
+output$plot_module_times_week <- secure_renderPlotly({
+  ggplotly(qa$module_times_week)
+})
+
+# Table of outliers in durations by module and enumerator
+#output$outlier_time <- secure_renderDT({datatable(qa$outlier_time)})
+
+# Table of module duration by week
+output$modules_time_week_table <- secure_renderDT({
+  datatable(
+    qa$modules_time_week_table,
+    options = list(
+      paging = FALSE,
+      dom = 't'
+    ),
+    rownames = FALSE
+  )
+})
+
+```
+
+
+```{r server_corrections}
+#| context: server
+
+# Connect to the board
+board <- board_connect()
+
+board_df <- tryCatch(
+  pin_read(board, "XXX/FDS_ZAM_corrections"),
+  error = function(e) {
+    message("Board does not exist or cannot be read. Proceeding without filtering.")
+    return(NULL)
+  }
+)
+
+# Filter qa$corrections if board_df is not NULL - This removes cases that have already been corrected that day but where the corrections script has not yet rerun
+if (!is.null(board_df)) {
+  qa$corrections <- qa$corrections %>%
+    filter(!logID %in% board_df$logID)
+}
+
+# Allow option to filter by team/enumerator
+qa$corrections
+
+df <- reactiveVal({qa$corrections})
+
+# df <- reactive({
+#     data <- df_all()
+#     if (input$enumerator != "All") {
+#       data <- data %>% filter(enumerator == input$enumerator)
+#     }
+#     if (input$team != "All") {
+#       data <- data %>% filter(team == input$team)
+#     }
+#     data
+#   })
+
+# Calculate the number of corrections logged for the value box
+corrections_logged <- reactive({
+  nrow(board_df)
+})
+
+output$corrections_logged <- corrections_logged
+
+# Calculate the number of corrections pending for the value box
+corrections_pending <- reactive({
+  df() %>% filter(completed == "No") %>% nrow()
+})
+
+output$corrections_pending <- corrections_pending
+  
+# Render the editable DataTable with only the "New value" column editable
+output$corrections <- secure_renderDT({
+  datatable(
+    df(),
+    editable = list(target = "cell", disable = list(columns = c(1:16))),
+    options = list(paging = FALSE)  # Turn off pagination
+  )
+})
+
+     # Observe cell edit events and update the reactive dataframe
+  observeEvent(input[["corrections_cell_edit"]], {
+    cell <- input[["corrections_cell_edit"]]
+    newdf <- df()
+    newdf[cell$row, cell$col] <- cell$value
+    df(newdf)
+  })
+
+# Render the editable DataTable with only the "New value" column
+observeEvent(input$logCorrections, {
+  board <- board_connect()
+
+  # Get completed data immediately
+  completed_data <- df() |>
+      filter(completed %in% c("Yes", "Y", "TRUE", "T", "yes"))|>
+      mutate(submissionDate = Sys.Date())
+  
+  # Retrieve existing data or create new
+  existing_data <- tryCatch(
+    pin_read(board, "XXX/FDS_ZAM_corrections"),
+    error = function(e) NULL
+  )
+  
+  # Convert all columns to character if existing_data is not NULL
+  if (!is.null(existing_data)) {
+    existing_data[] <- lapply(existing_data, as.character)
+    completed_data[] <- lapply(completed_data, as.character)
+  }
+  
+  # Combine data
+    combined_data <- if (!is.null(existing_data) && nrow(completed_data) > 0) {
+      bind_rows(existing_data, completed_data) %>% unique()
+    } else if (nrow(completed_data) > 0) {
+      completed_data
+    } else {
+# Message if no corrections
+      showNotification("No completed corrections to log", type = "warning")
+      return()
+    }
+    
+    # Write to pin
+    pin_write(board, combined_data, "XXX/FDS_ZAM_corrections", type = "csv")
+
+  # Message if corrections submitted
+    num_records <- nrow(completed_data)
+    message <- if (num_records == 1) {
+      "Correction logged successfully: 1 case"
+    } else {
+      paste("Corrections logged successfully:", num_records, "cases")
+    }
+    showNotification(message, type = "message")
+  })
+
+
+ # Download pending corrections
+  output[["downloadPendingCorrections"]] <- secure_downloadHandler(
+
+    filename = function() {
+      paste0(paste(Sys.Date(), "_FDS_ZAM_pending_corrections", sep = ""), ".csv")
+    },
+    content = function(file) {
+      write.csv(df()[df()$completed == "No", ], file, row.names = FALSE)
+    }
+  )
+
+ # Download log file
+output[["downloadCompleteCorrections"]] <- secure_downloadHandler(
+ filename = function() {
+   paste0(paste(Sys.Date(), "_FDS_ZAM_log_corrections", sep = ""), ".csv")
+ },
+ content = function(file) {
+   board <- board_connect()
+   corrections_data <- pin_read(board, "XXX/FDS_ZAM_corrections")
+   write.csv(corrections_data, file, row.names = FALSE)
+ }
+)
+
+# Display the overview
+output$overview <- renderText({
+  paste("Corrections logged:", corrections_logged(), 
+        "\nCorrections pending:", corrections_pending())
+})
+```
+
+
+```{r server_anthrocorrections}
+#| context: server
+
+# Connect to the board
+board <- board_connect()
+
+board_df_anthro <- tryCatch(
+  pin_read(board, "XXX/FDS_ZAM_anthro_corrections"),
+  error = function(e) {
+    message("Board does not exist or cannot be read. Proceeding without filtering.")
+    return(NULL)
+  }
+)
+
+# Filter qa$corrections if board_df is not NULL - This removes cases that have already been corrected that day but where the corrections script has not yet rerun
+if (!is.null(board_df_anthro)) {
+  qa$corrections_anthro <- qa$corrections_anthro %>%
+    filter(!logID %in% board_df$logID)
+}
+
+# Allow option to filter by team/enumerator
+qa$corrections_anthro
+
+df_anthro <- reactiveVal({qa$corrections_anthro})
+
+# df <- reactive({
+#     data <- df_all()
+#     if (input$enumerator != "All") {
+#       data <- data %>% filter(enumerator == input$enumerator)
+#     }
+#     if (input$team != "All") {
+#       data <- data %>% filter(team == input$team)
+#     }
+#     data
+#   })
+
+# Calculate the number of corrections logged for the value box
+anthro_corrections_logged <- reactive({
+  nrow(board_df_anthro)
+})
+
+output$anthro_corrections_logged <- anthro_corrections_logged
+
+# Calculate the number of corrections pending for the value box
+anthro_corrections_pending <- reactive({
+  df_anthro() %>% filter(completed == "No") %>% nrow()
+})
+
+output$anthro_corrections_pending <- anthro_corrections_pending
+  
+# Render the editable DataTable with only the "New value" column editable
+output$anthro_corrections <- secure_renderDT({
+  datatable(
+    df_anthro(),
+    editable = list(target = "cell", disable = list(columns = c(1:13,21:22))),
+    options = list(paging = FALSE)  # Turn off pagination
+  )
+})
+
+     # Observe cell edit events and update the reactive dataframe
+  observeEvent(input[["anthro_corrections_cell_edit"]], {
+    cell <- input[["anthro_corrections_cell_edit"]]
+    newdf <- df_anthro()
+    newdf[cell$row, cell$col] <- cell$value
+    df_anthro(newdf)
+  })
+
+# Render the editable DataTable with only the "New value" column
+observeEvent(input$logAnthroCorrections, {
+  board <- board_connect()
+
+  # Get completed data immediately
+  completed_data_anthro<- df_anthro() |>
+      filter(completed %in% c("Yes", "Y", "TRUE", "T", "yes"))|>
+      mutate(submissionDate = Sys.Date())
+  
+  # Retrieve existing data or create new
+  existing_data_anthro <- tryCatch(
+    pin_read(board, "XXX/FDS_ZAM_anthro_corrections"),
+    error = function(e) NULL
+  )
+  
+  # Convert all columns to character if existing_data is not NULL
+  if (!is.null(existing_data_anthro)) {
+    existing_data_anthro[] <- lapply(existing_data_anthro, as.character)
+    completed_data_anthro[] <- lapply(completed_data_anthro, as.character)
+  }
+  
+  # Combine data
+    combined_data_anthro <- if (!is.null(existing_data_anthro) && nrow(completed_data_anthro) > 0) {
+      bind_rows(existing_data_anthro, completed_data_anthro) %>% unique()
+    } else if (nrow(completed_data_anthro) > 0) {
+      completed_data_anthro
+    } else {
+# Message if no corrections
+      showNotification("No completed corrections to log", type = "warning")
+      return()
+    }
+    
+    # Write to pin
+    pin_write(board, combined_data_anthro, "XXX/FDS_ZAM_anthro_corrections", type = "csv")
+
+  # Message if corrections submitted
+    num_records <- nrow(completed_data_anthro)
+    message <- if (num_records == 1) {
+      "Correction logged successfully: 1 case"
+    } else {
+      paste("Corrections logged successfully:", num_records, "cases")
+    }
+    showNotification(message, type = "message")
+  })
+
+
+ # Download pending corrections
+  output[["downloadPendingAnthroCorrections"]] <- secure_downloadHandler(
+
+    filename = function() {
+      paste0(paste(Sys.Date(), "_FDS_ZAM_pending_anthro_corrections", sep = ""), ".csv")
+    },
+    content = function(file) {
+      write.csv(df_anthro()[df_anthro()$completed == "No", ], file, row.names = FALSE)
+    }
+  )
+
+ # Download log file
+output[["downloadCompleteAnthroCorrections"]] <- secure_downloadHandler(
+ filename = function() {
+   paste0(paste(Sys.Date(), "_FDS_ZAM_log_anthro_corrections", sep = ""), ".csv")
+ },
+ content = function(file) {
+   board <- board_connect()
+   corrections_data_anthro <- pin_read(board, "XXX/FDS_ZAM_anthro_corrections")
+   write.csv(corrections_data_anthro, file, row.names = FALSE)
+ }
+)
+
+# Display the overview
+output$anthro_overview <- renderText({
+  paste("Corrections logged:", corrections_logged(), 
+        "\nCorrections pending:", corrections_pending())
+})
+```
+
+
+```{r server_observations}
+#| context: server
+
+# Define file path for cached observations
+cache_file <- "observations_cache.rds"
+
+# Load observations from cache
+if (file.exists(cache_file)) {
+  qa$observations <- readRDS(cache_file)
+} else {
+  qa$observations <- NULL  # If cache does not exist yet
+}
+
+board_df_o <- tryCatch(
+  pin_read(board, "XXX/FDS_ZAM_observations"),
+  error = function(e) {
+    message("Board does not exist or cannot be read. Proceeding without filtering.")
+    return(NULL)
+  }
+)
+
+# Filter qa$observations if board_df_o is not NULL - This removes cases that have already been corrected that day but where the observations script has not yet rerun
+if (!is.null(board_df_o)) {
+  qa$observations <- qa$observations %>%
+    filter(!logID %in% board_df_o$logID)
+}
+
+df_observations <- reactiveVal(qa$observations)
+
+# Calculate the number of observations logged
+observations_logged <- reactive({
+ board <- board_connect()
+  nrow(pin_read(board, "XXX/FDS_ZAM_observations"))
+})
+
+output$observations_logged <- observations_logged
+
+# Calculate the number of observations pending
+observations_pending <- reactive({
+  df_observations() %>% filter(completed == "No") %>% nrow()
+})
+
+output$observations_pending <- observations_pending
+  
+  # Render the editable DataTable with only the "Complete" column editable
+  output$observations <- secure_renderDT({
+    datatable(df_observations(), editable = list(target = "cell", disable = list(columns = c(1:12))))
+  })
+
+  
+   # Observe cell edit events and update the reactive dataframe
+  observeEvent(input[["observations_cell_edit"]], {
+    cell <- input[["observations_cell_edit"]]
+    newdf_obs <- df_observations()
+    newdf_obs[cell$row, cell$col] <- cell$value
+    df_observations(newdf_obs)
+  })  
+ # Download pending observations
+  output[["downloadPendingObservations"]] <- secure_downloadHandler(
+
+    filename = function() {
+      paste0(paste(Sys.Date(), "_FDS_ZAM_pending_observations", sep = ""), ".csv")
+    },
+    content = function(file) {
+      write.csv(df_observations()[df_observations()$completed == "No", ], file, row.names = FALSE)
+    }
+  )
+
+ # Download log file
+output[["downloadCompleteObservations"]] <- secure_downloadHandler(
+ filename = function() {
+   paste0(paste(Sys.Date(), "_FDS_ZAM_log_observations", sep = ""), ".csv")
+ },
+ content = function(file) {
+   board <- board_connect()
+   observations_data <- pin_read(board, "XXX/FDS_ZAM_observations")
+   write.csv(observations_data, file, row.names = FALSE)
+ }
+)
+  
+# Render the editable DataTable with only the "correctedValue" column
+observeEvent(input$logObservations, {
+  board <- board_connect()
+
+  # Get completed data immediately
+  completed_data_obs <- df_observations()[df_observations()$completed %in% c("Yes", "Y", "TRUE", "T", "yes"), ] |>
+      mutate(submissionDate = Sys.Date())
+  
+  # Retrieve existing data or create new - 
+  existing_data_obs <- tryCatch(
+    pin_read(board, "XXX/FDS_ZAM_observations"),
+    error = function(e) NULL
+  )
+  
+  # Convert all columns to character if existing_data is not NULL
+  if (!is.null(existing_data_obs)) {
+    existing_data_obs[] <- lapply(existing_data_obs, as.character)
+    completed_data_obs[] <- lapply(completed_data_obs, as.character)
+  }
+  
+  # Combine data
+  if (!is.null(existing_data_obs)) {
+    combined_data_obs <- bind_rows(existing_data_obs, completed_data_obs)
+    combined_data_obs <- unique(combined_data_obs)
+  } else {
+    combined_data_obs <- completed_data_obs
+  }
+  
+  # Write to pin
+  pin_write(board, combined_data_obs, "XXX/FDS_ZAM_observations", type = "csv")
+  
+  # Show notification
+  showNotification("Observations logged successfully", type = "message")
+})
+
+# Display the overview
+output$overview_observations <- renderText({
+  paste("Observations logged:", observations_logged(), 
+        "\nObservations pending:", observations_pending()) 
+})
+ 
+```
+
+
+```{r server_data}
+#| context: server
+#|  # Download of all anthro data
+output[["downloadAnthroData"]] <- secure_downloadHandler(
+ filename = function() {
+   paste0(paste(Sys.Date(), "_FDS_ZAM_anthro_data", sep = ""), ".csv")
+ },
+ content = function(file) {
+   anthro_data <- qa$anthro_data
+   write.csv(anthro_data, file, row.names = FALSE)
+ }
+)
+  
+#|  # Download anthro data for ENA software
+output[["downloadAnthroDataENA"]] <- secure_downloadHandler(
+ filename = function() {
+   paste0(paste(Sys.Date(), "_FDS_ZAM_anthro_data_ENA", sep = ""), ".csv")
+ },
+ content = function(file) {
+   anthro_data_ENA <- qa$anthro_data_ENA
+   write.csv(anthro_data_ENA, file, row.names = FALSE)
+ }
+)  
+
+#|  # Download table with complete interviews per week and stratum
+output[["downloadcompleteweekstratum"]] <- secure_downloadHandler(
+ filename = function() {
+   paste0(paste(Sys.Date(), "_FDS_ZAM_complete_week_stratum", sep = ""), ".csv")
+ },
+ content = function(file) {
+   complete_week_stratum <- qa$wide_active_stratum
+   write.csv(complete_week_stratum, file, row.names = FALSE)
+ }
+)
+  
+```

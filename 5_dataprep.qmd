@@ -1,0 +1,2636 @@
+---
+title: "Data preparation for QA dashboard"
+format: html
+editor: source
+---
+
+```{r}
+
+## Load packages
+if (!requireNamespace("pacman", quietly = TRUE)) {
+install.packages("pacman")
+}
+
+pacman::p_load(readxl, purrr, scales, lubridate, haven, labelled, shiny, shinydashboard,
+               shinyWidgets, shinyauthr, shinyjs, tidyverse, fusen, plotly,
+               unhcrthemes, ggforce, ggridges, DT, bslib, readr, writexl, pins, sparkline, 
+               leaflet, shinyBS, mapboxer, zscorer, rlang, nipnTK, rsconnect, dm, robotoolbox,
+               Microsoft365R)
+```
+
+# Load other functions for QA checks/figures THIS WILL BE REMOVED AS EVERYTHING MOVES TO FUNS.R
+
+```{r}
+load_flat_functions("3_functions/flat_functions_qa_dashboard.qmd", envir = globalenv())
+load_flat_functions("3_functions/flat_functions_qa.qmd", envir = globalenv())
+```
+
+```{r}
+source("1_params.R") # Load parameters
+source("2_funs.R") # Load functions
+source("design.R") # Load design specifications
+source(".Renviron") # Load API keys
+```
+
+# Load data
+
+```{r data_import}
+#| context: setup
+
+# Load data
+board <- board_connect(auth = "envvar")
+df_l <- pin_read(board, "XXX/FDS_ZAM_qa_raw")
+
+df_l$id <- NULL
+#df_l <- df_raw
+```
+
+
+```{r}
+# Only keep key_vars that are actually in data
+params$key_vars <- params$key_vars[sapply(params$key_vars, function(var) any(sapply(df_l, function(df) var %in% names(df))))]
+
+df_l$hhmain <- n_interviews(df_l$hhmain, group_var = Intro_01) # Number of interviews by enumerator
+
+df_l$hhmain <- add_key_variables(df_l$hhmain, params$key_vars) # Add key variables
+
+#df_l <- map(df_l, ~ date_vars(.x, tz_loc = timezone)) # Format date variables
+
+df_l[names(df_l) != "gp_migrant"] <- map(
+  df_l[setdiff(names(df_l), "gp_migrant")], 
+  ~ date_vars(.x, tz_loc = timezone)
+)
+
+df_l$hhmain <- df_l$hhmain |> 
+  group_by(source) |> 
+  current_version(Version) # Add infomation on current form version number
+
+columns_to_merge <- c("HeadAge",
+                      "complete_interview",
+                      "HHsize",
+                      "n_interviews_enum",
+                      "HeadSex")
+df_l <- merge_hh_info_wrapper(df_l, columns_to_merge) # Merge header variables
+df_l <- map(df_l, ~ mutate(.x, last_update = format(Sys.time(), "%d/%m/%Y, %H:%M"))) # Add information on last update
+
+df_l$hhmain <- n_interviews_per_week(df_l$hhmain) # Number of interviews by enumerator per week
+df_l$hhroster <- n_interviews_per_week(df_l$hhroster) # Number of interviews by enumerator per week
+df_l$hhmain <- n_interviews_per_week_complete(df_l$hhmain) # Number of complete interviews by enumerator per week
+df_l$hhroster <- n_interviews_per_week_complete(df_l$hhroster) # Number of complete interviews by enumerator per week
+df_l$hhmain <- n_interviews_complete(df_l$hhmain) # Number of complete interviews by enumerator
+df_l$hhroster <- n_interviews_complete(df_l$hhroster) # Number of complete interviews by enumerator
+
+## Consolidate variables with multiple units: hours and minutes/weekly, monthly and annual income/meters and hectares
+df_l$hhmain <- df_l$hhmain |> combine_units_main()
+
+if (!is.null(df_l$plot_roster_info)) {
+  df_l$plot_roster_info <- df_l$plot_roster_info |> combine_units_plot()
+}
+
+# Still missing: "EMP06d", "EMP10_14", "EMP10_19_amount", "EMP10_19a_amount", "EMP16_2", "EMP19", "EMP24", "INFO02a_time_total")
+```
+
+# Merge with sample
+
+```{r}
+# Read the sample file
+sample_df <- read_csv("sample.csv") %>%
+  select(label, samp_strata) %>%   # Keep only relevant columns
+  rename(stratum = samp_strata)    # Rename samp_strata to stratum
+
+# Apply the join to all data frames in df_l
+#df_l <- map(df_l, ~ left_join(.x, sample_df, by = c("Intro_06" = "label")))
+df_l[names(df_l) != "gp_migrant"] <- map(
+  df_l[setdiff(names(df_l), "gp_migrant")],
+  ~ left_join(.x, sample_df, by = c("Intro_06" = "label"))
+)
+
+```
+
+# Correct data using logs
+
+## General
+```{r corrections}
+# Import corrections table
+board <- board_connect()
+corrections <- pin_read(board, "XXX/FDS_ZAM_corrections")
+
+# Manually remove cases with duplicate entries
+corrections <- corrections %>%
+  filter(!logID %in% c("301-2025-05-22-37-1", 
+                       "301-2025-04-18-21-1", 
+                       "301-2025-04-18-4-1",
+                       "301-2025-04-16-23-1",
+                       "301-2025-04-16-25-1",
+                       "301-2025-04-16-6-1",
+                       "301-2025-04-16-21-1",
+                       "301-2025-04-16-27-1",
+                       "301-2025-05-07-55-1",
+                       "301-2025-05-07-33-1",
+                       "301-2025-05-07-12-1",
+                       "301-2025-05-22-14-1",
+                       "301-2025-04-19-36-1",
+                       "301-2025-04-19-69-1",
+                       "301-2025-04-19-16-1",
+                       "301-2025-05-30-52-1",
+                       "301-2025-04-17-33-1",
+                       "301-2025-04-17-80-1",
+                       "301-2025-04-17-19-1"))
+
+# Pivot corrections table
+corrections_p <- corrections |>
+  select(-logID, -submissionDate) |>
+  unique() |>
+  group_by(uuid, index, variable) |>
+  filter(row_number() == 1) |>
+  filter(correctedValue != "", !is.na(correctedValue)) |>
+  select(uuid, index, variable, correctedValue) |>
+  pivot_wider(names_from = variable, values_from = correctedValue, names_prefix = "corr_") |>
+  rename(`_uuid` = uuid, `_index` = index) |>
+  as.data.frame()
+
+
+
+corrections_p_index <-
+  corrections_p %>%
+  filter(!is.na(`_index`))
+
+corrections_p_no_index <-
+  corrections_p %>%
+  filter(is.na(`_index`))
+
+# Enhanced merge function that handles both cases
+merge_corrections_combined <- function(df, corrections_df) {
+  # Check if required columns exist
+  if (!"_uuid" %in% names(df)) {
+    message("Original dataframe is missing '_uuid' column. Skipping merge.")
+    return(df)
+  }
+  
+  if (!"_uuid" %in% names(corrections_df)) {
+    message("Corrections dataframe is missing '_uuid' column. Skipping merge.")
+    return(df)
+  }
+  
+  # Ensure '_uuid' columns are the same type (convert to character)
+  corrections_df <- corrections_df %>%
+    mutate(`_uuid` = as.character(`_uuid`))
+  
+  df <- df %>%
+    mutate(`_uuid` = as.character(`_uuid`))
+  
+  # Handle _index column - convert to character if it exists, otherwise create as NA
+  if ("_index" %in% names(corrections_df)) {
+    corrections_df <- corrections_df %>%
+      mutate(`_index` = as.character(`_index`))
+  } else {
+    corrections_df$`_index` <- NA_character_
+  }
+  
+  if ("_index" %in% names(df)) {
+    df <- df %>%
+      mutate(`_index` = as.character(`_index`))
+  } else {
+    df$`_index` <- NA_character_
+  }
+  
+  # Check if corrections dataframe has any data
+  if (nrow(corrections_df) == 0) {
+    message("Corrections dataframe is empty. Returning original dataframe.")
+    return(df)
+  }
+  
+  # Split corrections into those with and without valid _index
+  corrections_with_index <- corrections_df %>%
+    filter(!is.na(`_index`))
+  
+  corrections_without_index <- corrections_df %>%
+    filter(is.na(`_index`))
+  
+  # Start with original dataframe
+  merged_df <- df
+  
+  # First merge: corrections with valid _index (merge on both _uuid and _index)
+  if (nrow(corrections_with_index) > 0) {
+    message(paste("Merging", nrow(corrections_with_index), "corrections on both _uuid and _index"))
+    merged_df <- merged_df %>%
+      left_join(corrections_with_index, by = c("_uuid", "_index"), suffix = c("", "_corr"))
+  }
+  
+  # Second merge: corrections without _index (merge on _uuid only)
+  # Only merge rows that haven't been updated yet
+  if (nrow(corrections_without_index) > 0) {
+    message(paste("Merging", nrow(corrections_without_index), "corrections on _uuid only"))
+    
+    # Find which rows haven't been updated yet (no _corr columns or all _corr columns are NA)
+    corr_cols <- names(merged_df)[grepl("_corr$", names(merged_df))]
+    
+    if (length(corr_cols) > 0) {
+      # Identify rows that haven't been corrected yet
+      uncorrected_mask <- merged_df %>%
+        select(all_of(corr_cols)) %>%
+        apply(1, function(x) all(is.na(x)))
+      
+      # Only merge corrections for uncorrected rows
+      temp_merge <- merged_df[uncorrected_mask, ] %>%
+        select(-all_of(corr_cols)) %>%  # Remove existing _corr columns
+        left_join(corrections_without_index, by = "_uuid", suffix = c("", "_corr"))
+      
+      # Update the merged dataframe
+      merged_df[uncorrected_mask, ] <- temp_merge
+    } else {
+      # No previous corrections, merge directly
+      merged_df <- merged_df %>%
+        left_join(corrections_without_index, by = "_uuid", suffix = c("", "_corr"))
+    }
+  }
+  
+  return(merged_df)
+}
+
+# Apply the combined merge function
+df_l <- lapply(df_l, function(df) {
+  merge_corrections_combined(df, corrections_p_index)  
+})
+
+
+# Remove cases with "delete"
+df_l <- lapply(df_l, function(df) {
+  df %>%
+    filter(!grepl("delete|drop|remove|del", corr_Intro_06, ignore.case = TRUE) | is.na(corr_Intro_06))
+})
+
+# Replace problematic cases (duplicates, outliers, etc.)
+columns_to_correct <- c(
+  "Intro_06",
+  "telHoH",
+  "BD20_min",
+  "SubPov02_month",
+  "CL02",
+  "CL09",
+  "Final_01",
+  "EMP16_2",
+  "EMP06d",
+  "EMP10_14",
+  "currentplot",
+  "HH_01b"
+)
+
+df_l <- lapply(df_l, function(df) {
+  for (col in columns_to_correct) {
+    corr_col <- paste0("corr_", col)
+    if (all(c(col, corr_col) %in% names(df))) {
+      df <- df %>%
+        mutate(!!sym(col) := case_when(
+          !is.na(!!sym(corr_col)) ~ !!sym(corr_col),
+          TRUE ~ as.character(!!sym(col))
+        ))
+    }
+  }
+  df
+})
+
+df_l <- lapply(df_l, function(df) {
+  # Remove correction columns after applying corrections  
+  df <- df %>%
+    select(-starts_with("corr_"))
+})
+
+# Apply the combined merge function no index
+df_l <- lapply(df_l, function(df) {
+  merge_corrections_combined(df, corrections_p_no_index)  
+})
+
+
+# Remove cases with "delete"
+df_l <- lapply(df_l, function(df) {
+  df %>%
+    filter(!grepl("delete|drop|remove|del", corr_Intro_06, ignore.case = TRUE) | is.na(corr_Intro_06))
+})
+
+df_l <- lapply(df_l, function(df) {
+  for (col in columns_to_correct) {
+    corr_col <- paste0("corr_", col)
+    if (all(c(col, corr_col) %in% names(df))) {
+      df <- df %>%
+        mutate(!!sym(col) := case_when(
+          !is.na(!!sym(corr_col)) ~ !!sym(corr_col),
+          TRUE ~ as.character(!!sym(col))
+        ))
+    }
+  }
+  df
+})
+
+df_l <- lapply(df_l, function(df) {
+  # Remove correction columns after applying corrections  
+  df <- df %>%
+    select(-starts_with("corr_"))
+})
+
+```
+## Anthropometrics
+```{r corrections_anthro}
+# Import anthro corrections table
+corrections_anthro <- pin_read(board, "XXX/FDS_ZAM_anthro_corrections") |>
+  mutate(index = as.character(index)) |>
+  mutate()
+
+# Set all values to NA that are not needed for corrections
+filter_corrections_by_variable <- function(corrections_df) {
+  corrections_df |>
+    mutate(
+      # Set values to NA based on variable type
+      age_months = case_when(
+        variable %in% c("Weight and/or age", "Height and/or age") ~ age_months,
+        TRUE ~ NA_real_
+      ),
+      MUAC_cm = case_when(
+        variable == "AN10" ~ MUAC_cm,
+        TRUE ~ NA_real_
+      ),
+      weight_kg = case_when(
+        variable %in% c("Weight and/or age", "Weight and/or length") ~ weight_kg,
+        TRUE ~ NA_real_
+      ),
+      length_height_cm = case_when(
+        variable %in% c("Weight and/or length", "Height and/or age") ~ length_height_cm,
+        TRUE ~ NA_real_
+      ),
+      standing_lying = case_when(
+        variable == "AN8" ~ standing_lying,
+        TRUE ~ NA_character_
+      ),
+      oedema = case_when(
+        variable == "AN9" ~ oedema,
+        TRUE ~ NA_character_
+      )
+    )
+}
+
+corrections_anthro <- filter_corrections_by_variable(corrections_anthro)
+
+# Pivot corrections table
+corrections_p_anthro <- corrections_anthro |>
+  select(uuid,
+         index,
+         childnametouseAGE = age_months,
+         AN10_cm = MUAC_cm,
+         child_weight = weight_kg,
+         child_height_length = length_height_cm,
+         AN8 = standing_lying) |>
+  group_by(uuid) |>
+  summarise(
+    index = first(index[!is.na(index)]),
+    childnametouseAGE = first(childnametouseAGE[!is.na(childnametouseAGE)]),
+    AN10_cm = first(AN10_cm[!is.na(AN10_cm)]),
+    child_weight = first(child_weight[!is.na(child_weight)]),
+    child_height_length = first(child_height_length[!is.na(child_height_length)]),
+    AN8 = first(AN8[!is.na(AN8)]),
+    .groups = "drop"
+  )
+  
+corrections_p_anthro <- corrections_p_anthro |>
+  rename_with(~ ifelse(.x %in% names(corrections_p_anthro)[1:2], .x, paste0("corr_", .x))) |> #Add corr prex except for uuid and index
+  rename(`_uuid` = uuid, `_index` = index)
+
+corrections_p_anthro_index <- corrections_p_anthro |>
+  filter(!is.na(`_index`))
+
+corrections_p_anthro_no_index <- corrections_p_anthro |>
+  filter(is.na(`_index`)) |>
+  select(-`_index`)
+
+columns_to_correct_anthro <- c(
+  "childnametouseAGE", 
+  "AN10_cm", 
+  "child_weight", 
+  "child_height_length", 
+  "AN8"
+)
+
+# Define the target data types for each column
+column_types <- list(
+  "childnametouseAGE" = "integer",
+  "AN10_cm" = "numeric", 
+  "child_weight" = "numeric",
+  "child_height_length" = "numeric",
+  "AN8" = "character"
+)
+
+correct_anthro <- function(df) {
+   for (col in columns_to_correct_anthro) {
+     corr_col <- paste0("corr_", col)
+     
+     if (all(c(col, corr_col) %in% names(df))) {
+       target_type <- column_types[[col]]
+       
+       df <- df %>%
+         mutate(!!sym(col) := case_when(!is.na(!!sym(corr_col)) ~ {
+           if (target_type == "integer") {
+             as.integer(!!sym(corr_col))
+           } else if (target_type == "numeric") {
+             as.numeric(!!sym(corr_col))
+           } else if (target_type == "character") {
+             as.character(!!sym(corr_col))
+           }
+         }, TRUE ~ {
+           if (target_type == "integer") {
+             as.integer(!!sym(col))
+           } else if (target_type == "numeric") {
+             as.numeric(!!sym(col))
+           } else if (target_type == "character") {
+             as.character(!!sym(col))
+           }
+         }))
+     }
+   }
+   df
+ }
+
+df_l$hhmain <- df_l$hhmain |>
+  left_join(corrections_p_anthro_index)
+
+df_l$hhmain <- df_l$hhmain |> 
+  correct_anthro() |>
+  select(-starts_with("corr_"))
+
+df_l$hhmain <- df_l$hhmain |>
+  left_join(corrections_p_anthro_no_index)
+
+df_l$hhmain <- df_l$hhmain |> 
+  correct_anthro() |>
+  select(-starts_with("corr_"))
+```
+
+```{r}
+#Formatting data on different units, after the corrections
+if (!is.null(df_l$plot_roster_info)) {
+  df_l$plot_roster_info <- df_l$plot_roster_info |> combine_units_plot()
+}
+```
+
+```{r}
+df_l$dem_tab <- df_l$HHmemberInfo |> dem_tab()
+```
+
+
+```{r}
+# Select key variables in each dataframe
+df_l$hhroster <- select_columns(df_l$hhroster, c("HH_01b", "relchoice", "week", "n_interviews_week", "complete_interview","n_interviews_week_complete", "memberPosition"))
+
+if (!is.null(df_l$ScProtec02_group)) {
+  df_l$ScProtec02_group <- select_columns(df_l$ScProtec02_group,
+                                          c("ScProtec02", "complete_interview","_parent_index", "_index"))
+}
+
+if (!is.null(df_l$plot_roster_info)) {
+  df_l$plot_roster_info <- select_columns(df_l$plot_roster_info,
+                                          c("currentplot", "complete_interview", "Land19a", "_parent_index", "_index"))
+}
+
+# Same for hhmain
+params$vars_outliers 
+params$vars_assets
+params$vars_anthro
+params$vars_anthro_plot
+```
+
+```{r}
+# Create list
+qa <- list()
+```
+
+```{r}
+## Last update
+qa$last_update <- max(df_l$hhmain$last_update)
+
+## Days since begin
+qa$days_since_begin <- max(df_l$hhmain$days_since_begin)
+
+## Response rate (total)
+
+qa$response_rate <- df_l$hhmain |> response_rate_total()
+
+## Refusal rate (total)
+
+qa$refusal_rate <- df_l$hhmain |> refusal_rate_total()
+
+## Cooperation rate (total)
+
+qa$cooperation_rate <- df_l$hhmain |> cooperation_rate_total()
+
+## Contact rate (total)
+
+qa$contact_rate <- df_l$hhmain |> contact_rate_total()
+
+## Replacement rate (total)
+
+qa$replacement_rate  <- df_l$hhmain %>%
+  filter(!stratum %in% c(
+    "Mayukwayukwa Hosts",
+    "Mayukwayukwa Settlement",
+    "Meheba Hosts",
+    "Meheba Settlement"
+  )) %>% 
+  replacement_rate_total()
+ 
+## Replacement need (% of all interviews that need to be replaced)
+
+qa$replacement_need <- df_l$hhmain %>%
+  filter(!stratum %in% c(
+    "Mayukwayukwa Hosts",
+    "Mayukwayukwa Settlement",
+    "Meheba Hosts",
+    "Meheba Settlement"
+  )) %>% 
+  replneed_rate_total()
+ 
+## % that needs to be replaced that was replaced
+
+qa$replacement_done <- df_l$hhmain |> repldone_rate_total()
+
+## Complete interviews
+compl_interviews <- df_l$hhmain |>
+  filter(complete_interview == 1)
+  
+## Final_01 vs complete_interview check 
+qa$interview_outcome_check <- df_l$hhmain |> check_final_vs_complete()
+```
+
+```{r}
+## Complete interviews total
+qa$interviews_day <- df_l$hhmain |>
+  daily_interviews() |>
+  pivot_longer(c(-Date, -`# of interviews`),
+               names_to = "Week",
+               values_to = "Daily mean/week") |>
+  mutate(`Daily mean/week` = `Daily mean/week` * 7) |>
+  filter(!is.na(`Daily mean/week`)) |>
+  ggplot(aes(x = as.Date(Date), y = `# of interviews`)) +
+  geom_col(fill = col_fill) +
+  geom_line(aes(x = as.Date(Date), y = `Daily mean/week`),
+            col = col_line,
+            group = 1) +
+  theme_unhcr(grid = "Y", axis = "X") +
+  labs(x = "", y = "Complete\ninterviews")
+
+## Complete interviews total, stratum
+
+all_strata <- data.frame(
+  stratum = c(
+    "Lusaka Asylum Seeker",
+    "Lusaka Refugee",
+    "Mantapala Hosts",
+    "Mantapala Settlement",
+    "Mayukwayukwa Hosts",
+    "Mayukwayukwa Settlement",
+    "Meheba Hosts",
+    "Meheba Settlement"
+  )
+)
+
+# Calculate sample targets
+qa$sample_targets <- df_l$hhmain |>
+  group_by(stratum) |>
+  filter(complete_interview == 1) |>
+  summarise(`Complete interviews` = n(), .groups = 'drop') |>
+  right_join(all_strata, by = "stratum") |>
+  replace_na(list(`Complete interviews` = 0)) |>
+  mutate(Target = 500) |>
+  mutate(
+    Target = case_when(
+      stratum == "Lusaka Asylum Seeker" ~ 150,
+      stratum == "Lusaka Refugee" ~ 350,
+      stratum == "Mantapala Hosts" ~ 400,
+      stratum == "Mantapala Settlement" ~ 500,
+      stratum == "Mayukwayukwa Hosts" ~ 400,
+      stratum == "Mayukwayukwa Settlement" ~ 876,
+      stratum == "Meheba Hosts" ~ 400,
+      stratum == "Meheba Settlement" ~ 974,
+      TRUE ~ Target
+    )
+  ) |>
+  mutate(
+    `Complete interviews (up to target)` = pmin(`Complete interviews`, Target),
+    # In case stratum target is overshot
+    `Pending interviews` = pmax(Target - `Complete interviews (up to target)`, 0),
+    `Sample completion` = percent(pmin(`Complete interviews` / Target, 1), accuracy = 1)
+  )
+
+# Add the total row
+total_row <- qa$sample_targets |>
+ summarise(
+ stratum = "Total",
+ `Complete interviews` = sum(`Complete interviews`),
+ Target = 4050,
+ `Complete interviews (up to target)` = sum(`Complete interviews (up to target)`),
+ `Pending interviews` = pmax(Target - sum(`Complete interviews (up to target)`), 0),
+ `Sample completion` = percent(pmin(sum(`Complete interviews (up to target)`) / Target, 1), accuracy = 1)
+ )
+
+qa$sample_targets <- bind_rows(total_row, qa$sample_targets)
+
+qa$complete_interviews <- total_row$`Sample completion`
+```
+```{r}
+# Sample completion for Meheba and MYK 
+
+df_complete_mm <- df_l$hhmain %>%
+  filter(
+    complete_interview == 1,
+    stratum %in% c("Meheba Settlement", "Mayukwayukwa Settlement"),
+    !is.na(hh_type)
+  ) %>%
+  mutate(
+    hh_type = factor(hh_type, levels = 1:4, labels = c(
+      "Refugee or Asylum Seeker Household without mobile members",
+      "Refugee or Asylum Seeker Household with mobile members",
+      "Rwandan Former Refugee Household",
+      "Angolan Former Refugee Household"
+    ))
+  )
+
+# Step 2: Count completed interviews by group
+df_completed_counts_mm <- df_complete_mm %>%
+  count(stratum, hh_type, name = "Complete interviews")
+
+# Step 3: Manual target table
+df_targets_mm <- tibble::tribble(
+  ~Stratum, ~`Household Type`, ~Target,
+  "Mayukwayukwa Settlement", "Refugee or Asylum Seeker Household without mobile members", 350,
+  "Mayukwayukwa Settlement", "Refugee or Asylum Seeker Household with mobile members", 250,
+  "Mayukwayukwa Settlement", "Rwandan Former Refugee Household", 6,
+  "Mayukwayukwa Settlement", "Angolan Former Refugee Household", 270,
+  "Meheba Settlement",        "Refugee or Asylum Seeker Household without mobile members", 350,
+  "Meheba Settlement",        "Refugee or Asylum Seeker Household with mobile members", 250,
+  "Meheba Settlement",        "Rwandan Former Refugee Household", 144,
+  "Meheba Settlement",        "Angolan Former Refugee Household", 230
+)
+
+# Step 4: Join and calculate sample completion
+df_sample_table_mm <- df_targets_mm %>%
+  left_join(df_completed_counts_mm, by = c("Stratum" = "stratum", "Household Type" = "hh_type")) %>%
+  mutate(
+    `Complete interviews` = replace_na(`Complete interviews`, 0),
+    `Sample completion` = paste0(round(100 * `Complete interviews` / Target), "%"),
+    Target = as.character(Target),
+    `Complete interviews` = as.character(`Complete interviews`)
+  ) %>%
+  select(Stratum, `Household Type`, Target, `Complete interviews`, `Sample completion`)
+
+# Step 5: Create stratum-level totals
+stratum_totals_mm <- df_complete_mm %>%
+  count(stratum, name = "n_complete") %>%
+  mutate(
+    target_total = case_when(
+      stratum == "Meheba Settlement" ~ 974,
+      stratum == "Mayukwayukwa Settlement" ~ 876
+    ),
+    completion_pct = paste0(round(100 * n_complete / target_total), "%"),
+    Target = as.character(target_total),
+    `Complete interviews` = as.character(n_complete),
+    `Sample completion` = completion_pct
+  ) %>%
+  select(
+    Stratum = stratum,
+    `Household Type` = stratum,
+    Target, `Complete interviews`, `Sample completion`
+  )
+
+# Step 6: Format final output
+qa$sample_completion_mm <- df_sample_table_mm %>%
+  group_split(Stratum) %>%
+  map_dfr(~{
+    header <- stratum_totals_mm %>%
+      filter(Stratum == unique(.x$Stratum)) %>%
+      mutate(Stratum = paste0("<b>", Stratum, "</b>"),
+             `Household Type` = "",
+             Target = Target,
+             `Complete interviews` = `Complete interviews`,
+             `Sample completion` = `Sample completion`)
+    body <- .x %>% mutate(Stratum = "")
+    bind_rows(header, body)
+  })
+
+```
+
+```{r}
+## Check of submissions from MYK/LUS in MYK sample
+qa$location_mm <- df_l$hhmain |>
+  filter(grepl("MYKPRO|MYKSET", Intro_06), complete_interview == 1) |>
+  filter(hh_type %in% c(1,2)) |>
+  mutate(
+    hh_type = factor(hh_type, levels = 1:4, labels = c(
+      "Refugee or Asylum Seeker Household without mobile members",
+      "Refugee or Asylum Seeker Household with mobile members",
+      "Rwandan Former Refugee Household",
+      "Angolan Former Refugee Household"
+    ))) |>
+  mutate(Sample = case_when(grepl("MYKPRO", Intro_06) ~ "MYKPRO",
+                   grepl("MYKSET", Intro_06) ~ "MYKSET")) |>
+  mutate(
+    Location = case_when(
+      Hhmove == "1" | is.na(Hhmove) ~ "Mayukwayukwa",
+      Hhmove == "2" ~ "Moved (Lusaka)",
+    )
+  ) |>
+  group_by(Sample, Location) |>
+  summarise(`Complete interviews` = n(), .groups = 'drop') |>
+  arrange(desc(Sample))
+
+```
+
+
+```{r}
+## Complete interviews by day, stratum
+qa$progress_stratum <- df_l$hhmain |>
+  filter(complete_interview == 1) |>
+  group_by(stratum) |>
+  arrange(start_date) |>
+  mutate(interview_count = row_number()) |>
+  ungroup() |> 
+  select(interview_count, start_date, stratum) |>
+  ggplot() +
+  geom_line(aes(as.Date(start_date), interview_count, color = stratum, group = stratum)) +
+  theme_unhcr(grid = "Y", axis = "x", axis_title = FALSE) +
+  scale_color_unhcr_d(palette = "pal_unhcr")   +
+  labs(x = "", y = "Complete interviews", color = "")
+
+## Map data
+qa$map_data <- df_l$hhmain %>%
+  filter(complete_interview == 1) %>%
+  mutate(
+    replacement = case_when(is.na(Intro_18) ~ "Main", !is.na(Intro_18) ~ "Replacement"),
+    color = case_when(
+      replacement == "Main" & Intro_07_lbl == "Refugee" ~ "#044F85",
+      replacement == "Replacement" &
+        Intro_07_lbl == "Refugee" ~ "#589BE5",
+      replacement == "Main" &
+        Intro_07_lbl == "Former refugees" ~ "#027B68",
+      replacement == "Replacement" &
+        Intro_07_lbl == "Former refugees" ~ "#49CFB4",
+      replacement == "Main" &
+        Intro_07_lbl == "Host community member" ~ "#B41C37",
+      replacement == "Replacement" &
+        Intro_07_lbl == "Host community member" ~ "#FF8490"
+    ),
+   Final_04_longitude = jitter(Final_04_longitude, amount = 0.1),
+   Final_04_latitude = jitter(Final_04_latitude, amount = 0.1)
+   ) %>%
+  select(
+    start_date,
+    week,
+    Intro_07_lbl,
+    Intro_06,
+    Final_04_longitude,
+    Final_04_latitude,
+    replacement,
+    color
+  ) %>%
+  mutate(hhs = 1) %>%
+  filter(!is.na(Final_04_longitude) &
+           !is.na(Final_04_latitude))
+
+# Complete interviews by stratum
+group_function <- function(df, group) {
+active_stratum <- df |>
+  mutate(weeks_since_begin = floor(days_since_begin / 7) + 1) |>
+  group_by(weeks_since_begin, {{group}}) |>
+  filter(complete_interview == 1) |>
+  mutate(stratum = as.factor({{group}})) |>
+  summarise(count = n()) |>
+  ungroup() |> 
+  to_factor()
+}
+
+active_stratum <- group_function(df_l$hhmain, stratum)
+
+heatmap_output <- function(df, group) {
+  ggplot(df, aes(x = weeks_since_begin, y = fct_rev({{group}}))) +
+  geom_tile(
+    aes(fill = count),
+    color = "white",
+    lwd = .5,
+    linetype = 1
+  ) +
+  geom_text(aes(label = count), 
+            color = if_else(df$count > max(df$count)/2, "white", 
+                            unhcr_pal(n = 5, "pal_grey")[5])) +
+  theme_unhcr(
+    grid = FALSE,
+    axis = FALSE,
+    axis_title = TRUE,
+    legend = FALSE
+  ) +
+  labs(x = "Week", y = "") +
+  scale_x_continuous(breaks = unique(df$weeks_since_begin)) + 
+  scale_fill_stepsn(colors = unhcr_pal(n = 5, "pal_blue"), n.break = 5)
+}
+
+qa$active_stratum <- heatmap_output(active_stratum, stratum)
+
+# Transform complete/stratum/week table to enable user friendly download option
+qa$wide_active_stratum <- active_stratum |>
+  pivot_wider(
+    names_from = stratum,  # Each stratum becomes a new column
+    values_from = count,   # Fill values with the 'count' column
+    values_fill = list(count = 0)  # Fill missing values with 0 (optional)
+  )
+
+# Complete interviews by team
+active_team <- group_function(df_l$hhmain, Intro_01a)
+
+
+# Plot heatmap
+qa$active_team <- heatmap_output(active_team, Intro_01a)
+
+#Outcome by stratum
+# qa$outcome_stratum <- df_l$hhmain |> 
+#   group_by(stratum, Final_01) |>
+#   summarise(count = n(), .groups = 'drop') |>
+#   group_by(stratum) |>
+#   mutate(proportion = count / sum(count),
+#          text_var = paste(labelled::to_factor(Final_01), scales::percent(proportion, 1), sep = "<br>")) |>
+#   ungroup() |>
+#   ggplot(aes(x = proportion, y = stratum, fill = (to_factor(Final_01)), text = text_var)) +
+#   geom_col(position = position_stack(reverse = T)) +
+#   scale_x_continuous(labels = percent, expand = c(0,0)) +
+#   guides(fill = guide_legend(reverse = T)) +
+#   labs(x = "", y = "", fill = "") +
+#   scale_fill_unhcr_d(palette = "pal_unhcr") +
+#   theme_unhcr(grid = "X", axis = "Y")
+
+# 
+final_labels <- c(
+  "1"  = "Complete Interview",
+  "2"  = "Partially complete interview",
+  "3"  = "Incomplete interview - Random member not completed",
+  "21" = "Refused to be interviewed - hard",
+  "22" = "Break-off, refusal",
+  "23" = "Long-term away, non-contact",
+  "24" = "Mental or physical incapacity to respond",
+  "25" = "Language barrier",
+  "31" = "Building belongs to already interviewed household",
+  "32" = "Household/building unreachable",
+  "33" = "Non-existing buidling, dilapidated",
+  "34" = "Non-residential building",
+  "35" = "Vacant housing unit",
+  "41" = "Not a (former) refugee household from a (former) refugee sample",
+  "42" = "Refugee household from hosts sample",
+  "43" = "Non-eligible - respondent below 15y",
+  "44" = "Screened out: Stratum complete/Ineligible household"
+)
+
+# final_levels <- final_labels[order(as.numeric(names(final_labels)))] # Keeps numeric order
+# 
+# qa$outcome_stratum <- df_l$hhmain |>
+#   mutate(Final_01 = as.character(Final_01),
+#          Final_01_label = factor(final_labels[Final_01], levels = final_levels)) |>
+#   group_by(stratum, Final_01_label) |>
+#   summarise(count = n(), .groups = 'drop') |>
+#   group_by(stratum) |>
+#   mutate(proportion = count / sum(count),
+#          text_var = paste0(Final_01_label, "<br>", scales::percent(proportion, 1))) |>
+#   ungroup() |>
+#   ggplot(aes(x = proportion, y = stratum, fill = Final_01_label, text = text_var)) +
+#   geom_col(position = position_stack(reverse = TRUE)) +
+#   scale_x_continuous(labels = scales::percent, expand = c(0, 0)) +
+#   guides(fill = guide_legend(reverse = TRUE)) +
+#   labs(x = "", y = "", fill = "") +
+#   scale_fill_unhcr_d(palette = "pal_unhcr") +
+#   theme_unhcr(grid = "X", axis = "Y")
+
+# full remapping from inconsistent inputs to standard codes
+raw_to_code <- c(
+  "1" = "1",
+  "2" = "2",
+  "3" = "3",
+  "21" = "21",
+  "22" = "22",
+  "23" = "23",
+  "24" = "24",
+  "25" = "25",
+  "31" = "31",
+  "32" = "32",
+  "33" = "33",
+  "34" = "34",
+  "35" = "35",
+  "41" = "41",
+  "42" = "42",
+  "43" = "43",
+  "44" = "44",
+  # messy values from data
+  "Not a refugee household from refugee sample" = "41",
+  "Non existing building, dilapidated building" = "33",
+  "Non-existing building, dilapidated" = "33",
+  "Long-term away, non-contact" = "23",
+  "Refused to be interviewed -  Hard Refusal" = "21",
+  "Refused to be interviewed - hard" = "21",
+  "Non-residential building" = "34",
+  "Vacant housing unit" = "35"
+)
+
+# Apply mapping
+df_plot <- df_l$hhmain |>
+  select(stratum, Final_01) |>
+  mutate(
+    Final_01_raw = as.character(Final_01),
+    Final_01_code = raw_to_code[Final_01_raw],
+    Final_01_label = final_labels[Final_01_code]
+  )
+
+ordered_levels <- final_labels[order(as.numeric(names(final_labels)))]
+df_plot <- df_plot |>
+  mutate(Final_01_label = factor(Final_01_label, levels = ordered_levels))
+
+qa$outcome_stratum <- df_plot |>
+  group_by(stratum, Final_01_code, Final_01_label) |>
+  summarise(count = n(), .groups = 'drop') |>
+  group_by(stratum) |>
+  mutate(
+    proportion = count / sum(count),
+    text_var = paste(Final_01_label, scales::percent(proportion, 1), sep = "<br>")
+  ) |>
+  ungroup() |>
+  ggplot(aes(x = proportion, y = stratum, fill = Final_01_label, text = text_var)) +
+  geom_col(position = position_stack(reverse = TRUE)) +
+  scale_x_continuous(labels = scales::percent, expand = c(0, 0)) +
+  guides(fill = guide_legend(reverse = TRUE)) +
+  labs(x = "", y = "", fill = "Outcome") +
+  scale_fill_unhcr_d(palette = "pal_unhcr") +
+  theme_unhcr(grid = "X", axis = "Y")
+
+
+
+## Replacements by stratum
+qa$replacements_stratum <- df_l$hhmain |> 
+  filter(complete_interview == 1) |>
+  group_by(stratum, Intro_06_sampletype) |>
+  summarise(count = n(), .groups = 'drop') |>
+  group_by(stratum) |>
+  mutate(proportion = count / sum(count),
+         text_var = paste(labelled::to_factor(Intro_06_sampletype), scales::percent(proportion,1), sep = "<br>")) |>
+  ungroup() |>
+  ggplot(aes(x = proportion, y = stratum, fill = (to_factor(Intro_06_sampletype)), text = text_var)) +
+  geom_col(position = position_stack(reverse = T)) +
+  scale_x_continuous(labels = percent, expand = c(0,0)) +
+  guides(fill = guide_legend(reverse = T)) +
+  labs(x = "", y = "", fill = "") +
+  scale_fill_unhcr_d(palette = "pal_unhcr") +
+  theme_unhcr(grid = "X", axis = "Y")
+
+## Current form version
+qa$current_version <- df_l$hhmain %>% 
+  group_by(source) %>% 
+  summarise(max_version = max(Version, na.rm = TRUE)) %>%
+  ungroup()
+```
+
+```{r}
+## Form version time
+
+update_version_time <- function(df_l, qa) {
+  required_vars <- c("start_date", "current_version_num")
+  
+  if (all(required_vars %in% names(df_l$hhmain))) {
+    qa$version_time <- df_l$hhmain |>
+      group_by(source, start_date) |>
+      summarise(version_num = max(current_version_num, na.rm = TRUE)) |>
+      ungroup() |>
+      group_by(source) |>
+      mutate(version_num = cummax(version_num)) |>
+      ungroup()
+  } else {
+    cat("Required variables are not present in the dataframe.\n")
+  }
+  
+  return(qa)
+}
+
+qa <- update_version_time(df_l, qa)
+```
+
+```{r}
+corrections_Intro_06_dupl <- corrections %>%
+           filter(variable == "Intro_06") %>%
+           select(uuid) 
+
+## ID duplicates
+qa$dupl_Intro_06 <- df_l$hhmain |>
+  check_duplicates("Intro_06")
+
+# Count number of duplicates
+qa$dupl_Intro_06_n <- qa$dupl_Intro_06 |>
+  group_by(`Original value`) |>
+  filter(row_number()>1) |>
+  nrow()
+```
+
+```{r}
+# Validation code duplicates 
+qa$dupl_Intro_17 <- df_l$hhmain |>
+  check_duplicates("Intro_17") 
+
+# Count number of duplicates
+qa$dupl_Intro_17_n <- qa$dupl_Intro_17 |>
+  group_by(`Original value`) |>
+  filter(row_number()>1) |>
+  nrow()
+
+qa$dupl_Intro_18 <- df_l$hhmain |>
+  check_duplicates("Intro_18")
+
+# Count number of duplicates
+qa$dupl_Intro_18_n <- qa$dupl_Intro_18 |>
+  group_by(`Original value`) |>
+  filter(row_number()>1) |>
+  nrow()
+```
+
+```{r}
+
+# Expected duration    
+# Calculate the mean submissions per day overall
+overall_mean <- df_l$hhmain %>%
+  filter(complete_interview == "1") %>%
+  group_by(start_date, stratum) %>%
+  summarise(num_submissions = n()) %>%
+  group_by(stratum) %>%
+  summarise(mean_submissions_per_day = mean(num_submissions)) %>%
+  ungroup()   %>%
+  mutate(method = paste0("Mean daily complete interviews in the stratum, since begin"))
+
+# Calculate the mean submissions per day for the last two weeks
+last_two_weeks <- Sys.Date() - 14
+
+last_two_weeks_mean <- df_l$hhmain %>%
+  filter(start_date >= last_two_weeks & complete_interview == "1") %>%
+  group_by(start_date, stratum) %>%
+  summarise(num_submissions = n()) %>%
+  group_by(stratum) %>%
+  summarise(mean_submissions_per_day = mean(num_submissions)) %>%
+  ungroup() %>%
+  mutate(method = paste0("Mean daily complete interviews in the stratum, last two weeks"))
+
+# Calculate submissions assuming 2 complete interviews per day per enumerator (taking the average number of working enumerators)
+enumerator_2_mean <- df_l$hhmain %>%
+  group_by(start_date, stratum) %>%
+  summarise(n_enumerators = n_distinct(Intro_01)) %>%
+  group_by(stratum) %>%
+  summarise(mean_submissions_per_day = mean(n_enumerators)*2)  %>%
+  mutate(method = "2 complete interviews per enumerator & day")
+
+# Calculate submissions assuming 1.5 complete interviews per day per enumerator (taking the average number of working enumerators)
+enumerator_1.5_mean <- df_l$hhmain %>%
+  group_by(start_date, stratum) %>%
+  summarise(n_enumerators = n_distinct(Intro_01)) %>%
+  group_by(stratum) %>%
+  summarise(mean_submissions_per_day = mean(n_enumerators)*1.5) %>%
+  ungroup()  %>%
+  mutate(method = "1.5 complete interviews per enumerator & day")
+
+combined_means <- bind_rows(overall_mean, last_two_weeks_mean, enumerator_2_mean, enumerator_1.5_mean) |>
+  left_join(qa$sample_targets, by = "stratum") |>
+  rename(pending_interviews = `Pending interviews`,
+         target = Target)
+
+qa$combined_means <- combined_means |>
+  mutate(expected_duration_days = pending_interviews/mean_submissions_per_day,
+         expected_completion_date = Sys.Date() + expected_duration_days)
+```
+
+# Data quality
+
+### Missing values
+
+```{r}
+
+ #qa$missing <- df_l$hhmain |>
+   #combine_missing(all_of(params$vars_check_missing))
+
+
+### Enumerators using old form version
+
+ qa$version <- df_l$hhmain |>
+   check_version(Version)
+ 
+ qa$version_week <- df_l$hhmain |> check_version_week(Version)
+
+### Household size over time (by week)
+
+df_l$hhmain <- df_l$hhmain %>%
+    mutate(weeks_since_begin = floor(days_since_begin / 7) + 1) 
+
+weekly <- df_l$hhmain %>%
+  group_by(weeks_since_begin) %>%
+  summarise(
+    mean_size = mean(HHsize, na.rm = TRUE),
+    se = sd(HHsize, na.rm = TRUE) / sqrt(n())
+  )
+
+qa$hhsize_time <- ggplot() +
+  geom_violin(data = df_l$hhmain,
+              aes(x = factor(weeks_since_begin), y = HHsize),
+              fill = col_fill,
+              alpha = 0.6,
+              trim = FALSE) +
+  geom_errorbar(data = weekly,
+                aes(x = factor(weeks_since_begin), 
+                    ymin = mean_size - 2.5*se, 
+                    ymax = mean_size + 2.5*se),
+                width = 0.2) +
+  geom_line(data = weekly,
+            aes(x = factor(weeks_since_begin), y = mean_size, group = 1)) +
+  theme_unhcr() +
+  labs(
+    title = "",
+    x = "Week",
+    y = "Household size",
+    fill = "Week"
+  ) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank()
+  )
+```
+
+### Duplicates
+
+```{r}
+qa$dupl_HH01b <- df_l$hhroster |> 
+  mutate(`_index` = memberPosition) |> 
+  check_duplicates_in_repeat_group("HH_01b") # Name in household
+
+qa$dupl_telHoH <- df_l$hhmain %>%
+  filter(!(telHoH %in% c(998, 999))) %>%
+  check_duplicates("telHoH")
+
+# Phone
+qa$dupl_telAdultSelected <- df_l$hhmain |> 
+  check_duplicates("telAdultSelected") # Phone Random Adult
+
+if (!is.null(df_l$dupl_ScProtec02)) {
+  qa$dupl_ScProtec02 <- df_l$ScProtec02_group |> check_duplicates_in_repeat_group("ScProtec02") # Social protection program in household
+}
+if (!is.null(df_l$plot_roster_info)) {
+  qa$dupl_currentplot <- df_l$plot_roster_info |> check_duplicates_in_repeat_group("currentplot") # Plot name in household
+}
+```
+
+### Outliers
+```{r}
+#Outliers in demographic variables
+qa$outlier_dem <- check_outlier_dem(df_l$hhroster, df_l$hhmain) |> to_factor()
+
+# Outliers in demographic variables in the last week of data collection
+
+qa$outlier_dem_week <- check_outlier_dem_week(df_l$hhroster, df_l$hhmain) |> to_factor()
+
+
+# Outliers in numeric variables
+check_sd_list <- function(df_list, vars = params$vars_outliers, n_sd = params$sd) {
+  all_results <- list()
+  found_vars <- character()
+  
+  for (var_name in vars) {
+    var_sym <- rlang::sym(var_name)
+    var_results <- list()
+    var_found <- FALSE
+    
+    for (i in seq_along(df_list)) {
+      df_name <- names(df_list)[i]
+      if (is.null(df_name)) df_name <- paste0("df_", i)
+      
+      # Skip the dataframe hhmain_a
+      if (df_name == "hhmain_a") next
+      
+      if (var_name %in% names(df_list[[i]])) {
+        if (all(c("Intro_01", "Intro_01a", "n_interviews_enum_complete", "n_interviews_enum") %in% names(df_list[[i]]))) {
+          var_found <- TRUE
+          tryCatch({
+            enum_table <- df_list[[i]] |>
+              filter(!.data[[var_name]] %in% c(0, 98, 99, 998)) |>
+              mutate(
+                global_mean = round(mean(as.numeric(.data[[var_name]]), na.rm = TRUE), 2),
+                global_sd = round(sd(as.numeric(.data[[var_name]]), na.rm = TRUE), 2),
+                upper_thresh = round(global_mean + n_sd * global_sd, 2),
+                lower_thresh = max(round(global_mean - n_sd * global_sd, 2), 0, na.rm = TRUE)
+              ) |>
+              mutate(val = as.numeric(.data[[var_name]])) |>  # Convert to numeric here
+              ungroup() |>
+              filter(val >= upper_thresh | val <= lower_thresh) |>
+              select(Enumerator = Intro_01, Team = Intro_01a, `# of complete interviews by enumerator` = n_interviews_enum_complete, start_date, start_time, end_date, end_time, `Original value` = val, `_uuid`, `_index`, `Interview outcome` = Final_01, complete_interview,
+                     NUTS1 = Intro_03a_NUTS1, NUTS2 = Intro_03b_NUTS2, NUTS3 = Intro_03c_NUTS3, Stratum = stratum) |>
+              distinct()
+            
+            # Ensure consistent data types for all columns that might vary
+            enum_table <- enum_table |>
+              mutate(
+                `Original value` = as.numeric(`Original value`),  # Ensure numeric
+                Source = as.character(df_name),
+                Variable = as.character(var_name)
+              )
+            
+            var_results[[df_name]] <- enum_table
+          }, error = function(e) {
+            print(paste("Error in dataframe", df_name, "for variable", var_name, ":", e$message))
+          })
+        }
+      }
+    }
+    
+    if (var_found) {
+      found_vars <- c(found_vars, var_name)
+    }
+    
+    if (length(var_results) > 0) {
+      combined_var_results <- bind_rows(var_results)
+      all_results[[var_name]] <- combined_var_results
+    }
+  }
+  
+  if (length(all_results) > 0) {
+    final_results <- bind_rows(all_results)
+    return(final_results)
+  } else {
+    return(data.frame())
+  }
+}
+qa$outlier_num <- check_sd_list(df_l, vars = c(params$vars_outliers))
+```
+
+# Performance
+```{r}
+# Count number of complete interviews per day (for sparkline plot)
+qa$interview_count_day <- df_l$hhmain |>
+  filter(complete_interview == 1,
+             stratum != "Refugees sites Est/Nord/Adamaoua (proGres)") |>
+      arrange(start_date) |>
+      mutate(interview_count = row_number()) |>
+  select(start_date, interview_count, stratum)
+
+qa$enum_response_rate <-  df_l$hhmain |> 
+      response_rate_group(group = Intro_01) |> 
+      to_factor() |> 
+      rename(Enumerator = Intro_01)
+
+qa$enum_refusal_rate <- df_l$hhmain |> refusal_rate_enum() |> to_factor()
+
+# Enumerators with most frequent cases of DK or RF and enumerators with fewest cases of other/specify
+qa$outlier_response <- df_l$hhmain |> outlier_response_vars()
+
+# Enumerators with most frequent cases of DK or RF and enumerators with fewest cases of other/specify
+qa$outlier_response_week <- df_l$hhmain |> outlier_response_vars_week()
+
+#Distribution numeric demogaphic variables - age
+qa$plot_dem_age <- df_l$hhmain |>
+      mutate(HeadAge = as.integer(HeadAge),
+             age_selected = as.integer(age_selected),
+             agerandomwoman = as.integer(agerandomwoman),
+             finalcaregiverAGE = as.integer(finalcaregiverAGE)) |>
+      select(
+        `Age HoH` = HeadAge,
+        `Age random adult` = age_selected,
+        `Age random woman` = agerandomwoman,
+        `Age caregiver` = finalcaregiverAGE,
+      ) |>
+      pivot_longer(
+        cols = c(
+          `Age HoH`,
+          `Age random adult`,
+          `Age random woman`,
+          `Age caregiver`,
+        ),
+        values_to = "val",
+        names_to = "var"
+      ) |>
+      filter(val < 98) |>
+      ggplot(aes(val)) +
+      geom_bar(fill = col_fill) +
+      labs(x = "Age", y = "Count") +
+      facet_wrap(~var, scales = "free") +
+       theme_unhcr() 
+
+# Sex distribution
+qa$plot_dem_sex <- df_l$hhmain |>
+      mutate(
+        HeadSex = as.numeric(as_factor(HeadSex))) |>
+      mutate(
+        HeadSex = case_when(HeadSex == 1 ~ "Man",
+                            HeadSex == 2 ~ "Woman"),
+        HH_02_selected = case_when(HH_02_selected == 1 ~ "Man",
+                                   HH_02_selected == 2 ~ "Woman"),
+        finalcaregiverSEX  = case_when(finalcaregiverSEX == 1 ~ "Man",
+                                       finalcaregiverSEX == 2 ~ "Woman")
+      ) |>
+      select(`Sex HoH` = HeadSex,
+             `Sex random adult` = HH_02_selected,
+             `Sex caregiver` = finalcaregiverSEX) |>
+      pivot_longer(
+        cols = c(`Sex HoH`,
+                 `Sex random adult`,
+                 `Sex caregiver`),
+        values_to = "val",
+        names_to = "var"
+      ) |>
+      filter(!is.na(val)) |>
+      ggplot(aes(x = var, fill = val)) +
+      geom_bar(position = "fill", width = 0.5) +
+      labs(x = "", y = "") +
+      scale_y_continuous(labels = percent) +
+      coord_flip() +
+      facet_wrap( ~ var, scales = "free_y", nrow = 3) +
+      scale_fill_unhcr_d(palette = "pal_unhcr") +
+       theme_unhcr() +
+      theme(axis.text.y = element_blank()) +
+  guides(fill = guide_legend(title = NULL))
+
+# Distribution numeric demogaphic variables - size
+qa$plot_dem_size <- df_l$hhmain |>
+      mutate(
+        HHsize = as.integer(HHsize),
+        m18nAbove = str_count(m18nAbove, "\\d+"),
+        m18nBelow = lessthan18F + lessthan18M  # Sum of children (already numeric)
+      ) |>
+      select(
+        `Household size` = HHsize,
+        `Number of adults` = m18nAbove,
+        `Number of children` = m18nBelow
+      ) |>
+      pivot_longer(
+        cols = c(
+          `Household size`,
+          `Number of adults`,
+          `Number of children`
+        ),
+        values_to = "val",
+        names_to = "var"
+      ) |>
+      filter(!is.na(val)) |>  # Exclude missing values from plotting
+      ggplot(aes(val)) +
+      geom_bar(fill = col_fill) +
+      labs(x = "", y = "Count") +
+      facet_wrap(~var, scales = "free") +
+      theme_unhcr() +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme_unhcr(grid = "Y", axis = "X")
+
+# Sex distribution
+qa$plot_dem_sex <- df_l$hhmain |>
+      mutate(
+        HeadSex = as.numeric(as_factor(HeadSex))) |>
+      mutate(
+        HeadSex = case_when(HeadSex == 1 ~ "Man",
+                            HeadSex == 2 ~ "Woman"),
+        HH_02_selected = case_when(HH_02_selected == 1 ~ "Man",
+                                   HH_02_selected == 2 ~ "Woman"),
+        finalcaregiverSEX  = case_when(finalcaregiverSEX == 1 ~ "Man",
+                                       finalcaregiverSEX == 2 ~ "Woman")
+      ) |>
+      select(`Sex household head` = HeadSex,
+             `Sex random adult` = HH_02_selected,
+             `Sex caregiver` = finalcaregiverSEX) |>
+      pivot_longer(
+        cols = c(`Sex household head`,
+                 `Sex random adult`,
+                 `Sex caregiver`),
+        values_to = "val",
+        names_to = "var"
+      ) |>
+      filter(!is.na(val)) |>
+      ggplot(aes(x = var, fill = val)) +
+      geom_bar(position = "fill", width = 0.5) +
+      labs(x = "", y = "") +
+      scale_y_continuous(labels = percent, expand = c(0,0)) +
+      coord_flip() +
+      facet_wrap( ~ var, scales = "free_y", nrow = 3) +
+      scale_fill_unhcr_d(palette = "pal_unhcr") +
+       theme_unhcr(grid = "X", axis = "Y") +
+      theme(axis.text.y = element_blank()) +
+  guides(fill = guide_legend(title = NULL))
+
+
+# Daily interviews, weekly average (aggregate)
+# qa$p_daily_ave_int_week_group <- df_l$hhmain |>
+#       daily_interviews_grouped2(Intro_01) |>
+#       ggplot(aes(y = as.factor(weeks_since_begin), fill = (as.factor(mean_daily)))) +
+#       geom_bar(position = position_fill(reverse = TRUE)) +
+#       scale_x_continuous(labels = percent, expand = c(0,0)) +
+#       scale_fill_unhcr_d(palette = "pal_unhcr") +
+#       theme_unhcr(grid = "X", axis = "Y") +
+#       labs(y = "Week", x = "% of enumerators", fill = "Average daily interviews")
+qa$p_daily_ave_int_week_group <- df_l$hhmain |>
+  daily_interviews_grouped2(Intro_01) |>
+  count(weeks_since_begin, mean_daily) |>
+  group_by(weeks_since_begin) |>
+  mutate(
+    proportion = n / sum(n),
+    text = paste0(scales::percent(proportion, 1), " of enumerators")
+  ) |>
+  ungroup() |>
+  ggplot(aes(
+    y = as.factor(weeks_since_begin),
+    x = proportion,
+    fill = as.factor(mean_daily),
+    text = text
+  )) +
+  geom_col(position = position_stack(reverse = TRUE)) +
+  scale_x_continuous(labels = scales::percent, expand = c(0, 0)) +
+  scale_fill_unhcr_d(palette = "pal_unhcr") +
+  theme_unhcr(grid = "X", axis = "Y") +
+  labs(y = "Week", x = "% of enumerators", fill = "Average daily interviews")
+
+
+# Daily interviews, weekly average (enumerator)
+qa$p_daily_ave_int_week <- df_l$hhmain |>
+  daily_interviews_grouped(Intro_01) |>
+  pivot_longer(cols = -Intro_01,
+               names_to = "Week",
+               values_to = "Mean") |>
+  mutate(Intro_01 = to_factor(Intro_01),
+         text_var = paste(Intro_01, Mean, sep = "<br>")) |>
+  ggplot(aes(x = as.factor(Week), y = Mean, text = text_var)) +
+  geom_point() +
+  geom_hline(yintercept = 2, color = col_line)  +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme_unhcr(grid = "Y", axis = "X") +
+  labs(y = "Week", x = "Average daily interviews", fill = "")
+
+qa$daily_ave_int_week <- df_l$hhmain |> daily_interviews_grouped(Intro_01) 
+```
+
+```{r}
+# Skips
+qa$check_skip_all <- df_l$hhmain |> check_skip_all()
+
+# Skips in the last week
+qa$check_skip_all_week <- df_l$hhmain |> check_skip_all_week()
+
+# Observed handwashing facility
+qa$handwashing_ob <- df_l$hhmain |> handwashing_ob()
+
+# Observed handwashing facility in the last week
+qa$handwashing_ob_week <- df_l$hhmain |> handwashing_ob_week()
+
+# Working hours
+qa$outside_working_hours <- df_l$hhmain |> outside_working_hours()
+
+qa$outside_working_hours_enum <- df_l$hhmain |> outside_working_hours_enum()
+
+# Working hours plot
+# qa$plot_working_hours <- df_l$hhmain |>
+#   ggplot(aes(start_hours,
+#              fill = to_factor(outside_working_hours))) +
+#   geom_bar() +
+#   labs(title = "Interviews outside working hours",
+#        x = "Start time", y = "Interviews",
+#        guide = "none") +
+#   scale_fill_unhcr_d(palette = "pal_unhcr",
+#                      nmax = 2,
+#                      order = 2:1,
+#                      guide = "none") +
+#   theme_unhcr()
+
+qa$plot_working_hours <- df_l$hhmain |>
+  mutate(outside_working_hours = factor(outside_working_hours, 
+                                        levels = c(0, 1), 
+                                        labels = c("Interview starts or ends inside working hours", 
+                                                   "Interview starts and ends outside working hours"))) |>
+  #group_by(start_hours, outside_working_hours) |>
+  summarise(count = n(), .groups = "drop") |>
+  ggplot(aes(x = start_hours, y = count, color = outside_working_hours)) +
+  geom_segment(aes(xend = start_hours, yend = 0), linewidth = 1) +
+  geom_point(size = 4) +
+  labs(
+    title = "Interview times",
+    x = "Start time", 
+    y = "Count of interviews",
+    color = "Working Hours"  # Legend title
+  ) +
+  scale_color_unhcr_d(
+    palette = "pal_unhcr",
+    nmax = 2,
+    order = 2:1,
+    guide = guide_legend(title = "Working Hours")
+  ) +
+  theme_unhcr()
+
+qa$plot_working_hours <- df_l$hhmain |>
+  group_by(week, start_hours) |>
+  summarise(count = n(), .groups = "drop") |>
+  ggplot(aes(x = start_hours, y = week)) +
+  geom_tile(aes(fill = count),
+            color = "white",
+            linetype = 1,
+            lwd = .5) +
+  labs(
+    x = "Start time", 
+    y = "Week of data collection",
+  ) +
+  scale_fill_stepsn(
+    colors = unhcr_pal(n = 5, "pal_blue"),
+    n.breaks = 5,
+    name = "Number of\ninterviews"
+  ) +
+  coord_fixed() +
+  theme_unhcr(grid = FALSE, axis = FALSE, axis_title = TRUE, legend_title = TRUE)
+
+# Compute response rate per enumerator (flagging low response rates) - PETRA
+qa$outlier_response_enum <- df_l$hhmain |> response_rate_enum()
+
+# Compute response rate per enumerator per week (flagging low response rates per week) - PETRA
+qa$outlier_response_enum_week <- df_l$hhmain |> response_rate_enum_week()
+
+# Compute refusal rate per enumerator (flagging high refusal rates) - PETRA
+qa$outlier_refusal_enum <- df_l$hhmain |> refusal_rate_enum()
+
+# Compute refusal rate per enumerator per week (flagging high refusal rates per week) - PETRA
+qa$outlier_refusal_enum_week <- df_l$hhmain |> refusal_rate_enum_week()
+```
+
+Summary
+```{r}
+# By team
+qa$team_summary <- df_l$hhmain |> 
+  team_summary()
+
+# By enumerator
+qa$enumerator_summary <- df_l$hhmain  |> 
+  enumerator_summary() |> 
+      rename(
+        "# of complete interviews" = "n_interviews_enum_complete",
+        "Enumerator" = "Intro_01",
+        "Team" = "Intro_01a",
+      )
+```
+
+
+# Duration
+```{r}
+# Mean times, by week
+qa$module_times <- module_time(df_l$hhmain)
+
+#Outliers in timing of the modules - PETRA
+qa$outlier_time <- check_sd_time_modules_enum(df_l$hhmain) |> to_factor()
+
+# Plot duration - Gross duration of interview after 1 week 
+
+qa$interview_times_week <- qa$module_times |>
+  filter(variable %in% c("Interview_time")) |>
+  na.omit() |>
+  ggplot(aes(x = weeks_since_begin, y = Average_Time, fill = to_factor(label))) +
+  geom_col(position = position_stack(reverse = FALSE), width = .7) +
+  geom_text(aes(label = round(Average_Time, 1)), 
+            position = position_stack(vjust = 0.5, reverse = FALSE),
+            color = "white", size = 3) +
+  theme_unhcr(axis = "X", grid = "Y") +
+  labs(
+  x = "Week of data collection",
+  y = "Mean time (minutes)",
+  fill = "Interview time - from Intro_01 to Final_01",
+  subtitle = "Gross interview time – from Intro_01 to Final_01"
+)+
+  scale_fill_unhcr_d() +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous(
+    breaks = scales::pretty_breaks(max(qa$module_times$weeks_since_begin))
+  )
+#Manual calculation for the caregiver modules as it is incorrect in the xls coding
+
+rc_time_adj <- df_l$hhmain %>%
+  filter(
+    start_date == end_date,
+    complete_interview == 1,
+    !(is.na(RC_A_time) & RC_A_time == "" &
+      is.na(RC_C_time) & RC_C_time == "" &
+      is.na(RC_I_time) & RC_I_time == "")
+  ) %>%
+  mutate(
+    start_time = coalesce(Enumerator4trigger, OBS_01_RA_EndTime),
+    start_time = as.POSIXct(start_time, format = "%Y-%m-%dT%H:%M:%OS%z", tz = "UTC"),
+    end_time   = as.POSIXct(Final_01_EndTime, format = "%Y-%m-%dT%H:%M:%OS%z", tz = "UTC"),
+    RC_time_adj = as.numeric(difftime(end_time, start_time, units = "mins"))
+  ) %>%
+  filter(RC_time_adj > 0, RC_time_adj < 60) %>%
+  group_by(weeks_since_begin) %>%
+  summarize(Average_Time = mean(RC_time_adj, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    variable = "RC_time_adj",
+    label = "Random Child + Caregiver",
+    section = "Randomly Selected Child"
+  )
+
+
+# rc_time_adj <- df_l$hhmain %>%
+#   filter(start_date == end_date, complete_interview == 1) %>%
+#   mutate(
+#     start_time = coalesce(Enumerator4trigger, OBS_01_RA_EndTime),
+#     start_time = as.POSIXct(start_time, format = "%Y-%m-%dT%H:%M:%OS%z", tz = "UTC"),
+#     end_time   = as.POSIXct(Final_01_EndTime, format = "%Y-%m-%dT%H:%M:%OS%z", tz = "UTC"),
+#     RC_time_adj = as.numeric(difftime(end_time, start_time, units = "mins"))
+#   ) %>%
+#   filter(RC_time_adj > 0) %>%
+#   group_by(weeks_since_begin) %>%
+#   summarize(Average_Time = mean(RC_time_adj, na.rm = TRUE), .groups = "drop") %>%
+#   mutate(
+#     variable = "RC_time_adj",
+#     label = "Random Child + Caregiver",
+#     section = "Randomly Selected Child"
+#   )
+
+#Combine with module times 
+qa$module_times <- bind_rows(
+  qa$module_times,
+  rc_time_adj
+)
+
+# Plot duration - turn into area plot after 1 week
+# qa$module_times_week <- qa$module_times |>
+#   filter(variable %in% c("HOH_time", "RA_time", "RW_time", "RC_time")) |>
+#   na.omit() |>
+#   ggplot(aes(x = weeks_since_begin, y = Average_Time, fill = to_factor(label))) +
+#   geom_col(position = position_stack(reverse = FALSE), width = .7) +
+#   geom_text(aes(label = round(Average_Time, 1)), 
+#             position = position_stack(vjust = 0.5, reverse = FALSE),
+#             color = "white", size = 3) +
+#   theme_unhcr(axis = "X", grid = "Y") +
+#   labs(x = "Week of data collection", y = "Mean time (minutes)", fill = "Questionnaire") +
+#   scale_fill_unhcr_d() +
+#   scale_y_continuous(expand = c(0,0)) +
+#   scale_x_continuous(
+#     breaks = scales::pretty_breaks(max(qa$module_times$weeks_since_begin))
+#   )
+
+qa$module_times_week <- qa$module_times |>
+  filter(variable %in% c("HOH_time", "RA_time", "RW_time", "RC_time_adj")) |>
+  mutate(label = factor(label, levels = c(
+    "Head of the Household",         # BOTTOM
+    "Randomly selected adult",
+    "Randomly selected woman",
+    "Random Child + Caregiver"      # TOP
+  ))) |>
+  na.omit() |>
+  ggplot(aes(x = weeks_since_begin, y = Average_Time, fill = label)) +
+  geom_col(position = position_stack(reverse = FALSE), width = .7) +
+  geom_text(aes(label = round(Average_Time, 1)), 
+            position = position_stack(vjust = 0.5, reverse = FALSE),
+            color = "white", size = 3) +
+  theme_unhcr(axis = "X", grid = "Y") +
+  labs(x = "Week of data collection", y = "Mean time (minutes)", fill = "Questionnaire") +
+  scale_fill_unhcr_d() +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_continuous(
+    breaks = scales::pretty_breaks(max(qa$module_times$weeks_since_begin))
+  )
+```
+
+```{r}
+#Table with duration of modules per week 
+modules_time_week_table <- function(df) {
+  existing_vars <- intersect(params$time_variables, names(df))
+
+  if (length(existing_vars) == 0) {
+    return(tibble(Section = character(), Module = character()))
+  }
+
+  # 1. Main filtered dataset
+  df_long <- df %>%
+    filter(
+      start_date == end_date,
+      complete_interview == 1,
+      start_date >= as.Date("2025-04-14")
+    ) %>%
+    group_by(weeks_since_begin) %>%
+    mutate(across(all_of(existing_vars), ~ if_else(!is.na(.x) & .x > 0, .x, NA_real_))) %>%
+    summarize(across(all_of(existing_vars), ~ mean(.x, na.rm = TRUE)), .groups = "drop") %>%
+    pivot_longer(cols = -weeks_since_begin, names_to = "variable", values_to = "Average_Time") %>%
+    filter(!variable %in% c("Interview_time", "HOH_time", "RA_time", "RW_time", "RC_time")) %>%
+    mutate(variable = factor(variable, levels = params$time_variables)) %>%
+    left_join(params$time_variable_labels, by = "variable") %>%
+    mutate(
+      Average_Time = case_when(
+        variable == "Healthcare_time" & weeks_since_begin < 4 ~ NA_real_,
+        TRUE ~ round(Average_Time, 2)
+      )
+    )
+
+  # 2. Recalculate Smwellbeing_time separately (after May 2)
+  df_smwellbeing <- df %>%
+    filter(
+      start_date == end_date,
+      complete_interview == 1,
+      start_date >= as.Date("2025-05-01"),
+      (
+      (Version >= 16 & source == "Nyanja") |
+      (Version >= 18 & source == "French/Swahili") |
+      (Version >= 19 & source == "Bemba")
+    )
+    ) %>%
+    mutate(Smwellbeing_time = if_else(Smwellbeing_time > 0, Smwellbeing_time, NA_real_)) %>%
+    group_by(weeks_since_begin) %>%
+    summarize(Average_Time = mean(Smwellbeing_time, na.rm = TRUE), .groups = "drop") %>%
+    mutate(
+      variable = factor("Smwellbeing_time", levels = params$time_variables)
+    ) %>%
+    left_join(params$time_variable_labels, by = "variable") %>%
+    mutate(Average_Time = round(Average_Time, 2))
+
+  # 3. Combine and keep correct order
+  df_long <- df_long %>%
+    filter(variable != "Smwellbeing_time") %>%
+    bind_rows(df_smwellbeing)
+
+  df_wide <- df_long %>%
+    select(Section = section, Module = label, Week = weeks_since_begin, Average_Time) %>%
+    pivot_wider(names_from = Week, values_from = Average_Time) %>%
+    rename_with(~ paste0("Week ", .x), -c(Section, Module)) %>%
+    arrange(factor(Module, levels = params$time_variable_labels$label))
+
+  return(df_wide)
+}
+
+
+
+qa$modules_time_week_table<- modules_time_week_table(df_l$hhmain)
+```
+
+# Anthropometrics
+
+```{r}
+# Add variable on whether child age was calculated through birth certificate/vaccination card or caregiver's statement. To this need to match the source of the date of birth for the *selected* child with the measurements - done here by pivoting, matching, creating dummies for measurement with birth certificate/immunization card and merging back with hhmain.
+
+# Set 98 and 99 to missing in child age
+df_l$hhmain <- df_l$hhmain |>
+  mutate(childnametouseAGE = case_when(childnametouseAGE %in% c(98, 99) ~ NA_real_,
+                                       TRUE ~ childnametouseAGE))
+
+if (!is.null(df_l$hhmain$immunization_card_agem)) {
+match_dob_measurement <- pivot_and_match_dob(df_l$hhmain)
+
+df_l$hhmain <- df_l$hhmain |>
+  left_join(match_dob_measurement)
+df_l$hhmain <-  df_l$hhmain |>
+  left_join(df_l$hhmain |>
+    z_scores_anthro() |>
+      select(`_uuid`, `_index`, child_height_length_l, child_height_length_h, wflz:mfaz_bin)) |>
+  mutate(across(c(
+    child_weight, child_height_length, childnametouseAGE, AN8, AN10_cm
+  ), as.character)) |>
+  mutate(across(c(
+    child_weight, child_height_length, childnametouseAGE, AN8, AN10_cm
+  ), as.numeric))
+
+df_l$hhmain_a <- df_l$hhmain |>
+    mutate(
+      `How date of birth was registered` = case_when(
+        as.factor(dob_card_selected_child) == "1" ~ "Birth certificate/immunization card",
+        as.factor(dob_card_selected_child) == "0" ~ "Caregiver statement"
+      ),
+      Sex = case_when(
+        childnametouseSEX == 1 ~ "Male",
+        childnametouseSEX == 2 ~ "Female"
+      )
+    )
+
+  # Function to generate anthro plors
+  anthro_plot <- function(x_var, y_var, z_bin, x_lab, y_lab) {
+    df_l$hhmain_a |>
+      select(Sex, {{y_var}}, {{x_var}}, {{z_bin}}) |>
+      filter(!is.na(Sex) & !is.na({{y_var}})) |>
+      ggplot(aes(x = {{x_var}}, y = {{y_var}}, color = {{z_bin}}), alpha = .4) +
+      geom_point() +
+      labs(x = x_lab, y = y_lab, color = "z-score") +
+      scale_color_unhcr_d() +
+      facet_wrap(~ Sex, nrow = 1) +
+      ylim(0, NA) +
+      xlim(0, NA) +
+      theme_unhcr(grid = "Y", axis = "X") +
+      scale_y_continuous(expand = c(0,0))
+  }
+
+  qa$plot_anthro <- df_l$hhmain_a |>
+    #select(-sex) |>
+    select(
+      Intro_06,
+      `Age (months)` = childnametouseAGE,
+      `MUAC (cm)` = AN10_cm,
+      `Weight (kg)` = child_weight,
+      `Length/height (cm)` = child_height_length
+    ) |>
+    pivot_longer(cols = -Intro_06,
+                 values_to = "val",
+                 names_to = "var") |>
+    filter(val < 98 & !is.na(val)) |>
+    ggplot(aes(val)) +
+    geom_histogram(fill = col_fill,
+                   color = "white",
+                   bins = 30) +
+    facet_wrap( ~ var, scales = "free") +
+          theme_unhcr(grid = "Y", axis = "X") +
+    scale_y_continuous(expand = c(0,0)) +
+    labs(y  = "Count", x = "")
+
+  qa$plot_anthro_sex <- df_l$hhmain_a |>
+    select(Intro_06, Sex) |>
+    pivot_longer(
+      cols = -Intro_06,
+      values_to = "val",
+      names_to = "var"
+    ) |>
+    filter(!is.na(val)) |>
+    ggplot(aes(x = var, fill = val)) +
+    geom_bar(position = "fill") +
+    labs(x = "", y = "") +
+    scale_y_continuous(labels = percent, expand = c(0,0)) +
+    coord_flip() +
+    facet_wrap(~ var, scales = "free", nrow = 2) +
+    scale_fill_unhcr_d(palette = "pal_unhcr") +
+    theme_unhcr(grid = "X", axis = "Y") +
+    theme(axis.text.y = element_blank())
+
+  qa$plot_anthro_z_hfa <- anthro_plot(
+    childnametouseAGE, child_height_length_h, hfaz_bin,
+    "Age (months)", "Height (cm)"
+  )
+
+    qa$plot_anthro_z_lfa <- anthro_plot(
+      childnametouseAGE, child_height_length_l, lfaz_bin,
+      "Age (months)", "Length (cm)"
+    )
+
+    qa$plot_anthro_z_wfa <- anthro_plot(
+      childnametouseAGE, child_weight, wfaz_bin,
+      "Age (months)", "Weight (kg)"
+    )
+
+    qa$plot_anthro_z_wfh <- anthro_plot(
+      child_height_length_h, child_weight, wfhz_bin,
+      "Height (cm)", "Weight (kg)"
+    )
+
+    qa$plot_anthro_z_wfl <- anthro_plot(
+      child_height_length_l, child_weight, wflz_bin,
+      "Length (cm)", "Weight (kg)"
+    )
+
+    qa$plot_anthro_z_mfa <- df_l$hhmain_a |>
+      select(childnametouseAGE, Sex, AN10_cm, mfaz_bin) |>
+      filter(!is.na(Sex) & !is.na(AN10_cm) & AN10_cm < 98) |>
+      ggplot(aes(x = childnametouseAGE, y = AN10_cm, color = mfaz_bin), alpha = .4) +
+      geom_point() +
+      labs(x = "Age (months)", y = "MUAC (cm)", color = "z-score") +
+      scale_color_unhcr_d() +
+      facet_wrap(~ Sex, nrow = 1) +
+      xlim(0, NA) +
+      theme_unhcr(grid = "Y", axis = "X") +
+      scale_y_continuous(expand = c(0,0), limits = c(0, NA))
+
+qa$digit_preference_no_doc <- tryCatch({
+  no_doc <- df_l$hhmain_a |> filter(dob_card_selected_child == 0) |> filter(childnametouseAGE != 99)
+  digitPreference(no_doc$childnametouseAGE, digits = 0, values = 0:9)
+}, error = function(e) {
+  message("Error in digit_preference_no_doc: ", e$message)
+  NULL
+})
+
+qa$digit_preference_doc <- tryCatch({
+  doc <- df_l$hhmain_a |> filter(dob_card_selected_child == 1) |> filter(childnametouseAGE != 99)
+  digitPreference(doc$childnametouseAGE, digits = 0, values = 0:9)
+}, error = function(e) {
+  message("Error in digit_preference_doc: ", e$message)
+  NULL
+})
+
+qa$t_test <- tryCatch({
+  no_doc <- df_l$hhmain_a |> filter(dob_card_selected_child == 0) |> filter(childnametouseAGE != 99)
+  doc <- df_l$hhmain_a |> filter(dob_card_selected_child == 1) |> filter(childnametouseAGE != 99)
+  t.test(no_doc$childnametouseAGE, doc$childnametouseAGE)
+}, error = function(e) {
+  message("Error in t_test: ", e$message)
+  NULL
+})
+
+qa$outlier_anthro <- df_l$hhmain_a |> z_scores_anthro_ts()
+
+qa$anthro_data <- df_l$hhmain_a |>
+    select(
+      `_uuid`,
+      `_index`,
+      Intro_06,
+      stratum,
+      complete_interview,
+      `DOB from birth certificate/card` = dob_card_selected_child,
+      Enumerator = Intro_01,
+      Team = Intro_01a,
+      Sex = childnametouseSEX,
+      `Age (months)` = childnametouseAGE,
+      `MUAC (cm)` = AN10_cm,
+      `Weight (kg)` = child_weight,
+      `Length/height (cm)` = child_height_length,
+      `Standing or lying` = AN8,
+      Oedema = AN9)
+}
+```
+
+```{r}
+#Data for ENA
+qa$anthro_data_ENA <- df_l$hhmain |>
+  mutate(across(everything(), ~ remove_labels(.x))) |>
+  mutate(
+    CLUSTER = 1,
+    SEX = case_when(
+      as.numeric(childnametouseSEX) == 1 ~ "m",
+      as.numeric(childnametouseSEX) == 2 ~ "f"
+    ),
+    EDEMA = case_when(
+      as.numeric(AN9) == 1 ~ "y",
+      as.numeric(AN9) == 2 ~ "n"
+    ),
+    MEASURE = case_when(
+      as.numeric(AN8) == 1 ~ "h",
+      as.numeric(AN8) == 2 ~ "l"
+    ),
+    CLOTHES = case_when(
+      as.numeric(AN5) == 1 ~ "n",
+      as.numeric(AN5) == 2 ~ "y"
+    ),
+    MUAC = AN10_cm * 10, 
+    SURVDATE = format(as.Date(start_date), "%m/%d/%Y")
+  ) |>
+  filter(
+    !is.na(childnametouseSEX),
+    !is.na(childnametouseAGE),
+    !is.na(child_weight),
+    !is.na(child_height_length)
+  ) |>
+  select(
+    SURVDATE,
+    CLUSTER,
+    TEAM = Intro_01a,
+    ID = `_uuid`,
+    HH = Intro_06,
+    SEX,
+    MONTHS = childnametouseAGE,
+    EDEMA,
+    WEIGHT = child_weight,
+    HEIGHT = child_height_length,
+    MUAC,
+    MEASURE,
+    CLOTHES,
+    STRATA = stratum,
+    ENUMERATOR = Intro_01,
+    MEASURER = AN12,
+    WEEK = weeks_since_begin
+  )
+```
+
+```{r}
+if (!is.null(df_l$hhmain_a)) {
+  qa$anthro_measure_method <- df_l$hhmain_a |> anthro_measure_method()
+}
+```
+
+```{r}
+if (!is.null(df_l$hhmain_a)) {
+  qa$oedema_check <- df_l$hhmain_a |> anthro_oedema_check()
+}
+```
+
+# Corrections sheets
+
+## General
+```{r}
+# Select which tables to include (any that are not present are skipped)
+corrections_new <- qa[intersect(names(qa), c(
+  "dupl_Intro_06",
+  #"dupl_Intro_17",
+  #"dupl_Intro_18",
+  "dupl_HH01b",
+  "dupl_telHoH",
+  "dupl_ScProtec02",
+  "dupl_currentplot",
+  "interview_outcome_check",
+  "outlier_num"
+))]
+
+# Function to add column with name of QA indicator to each dataframe in list
+add_ind_column <- function(corrections_new) {
+  corrections_new <- lapply(names(corrections_new), function(df_name) {
+    df <- corrections_new[[df_name]]
+    if (nrow(df) > 0) {
+      df$ind <- df_name
+    }
+    return(df)
+  })
+    names(corrections_new) <- names(corrections_new)
+  
+  return(corrections_new)
+}
+
+corrections_new <- add_ind_column(corrections_new)
+
+# Function to bind and ensure all 'Original value' columns are of the same type
+bind_corrections <- function(corrections_new) {
+  if (length(corrections_new) == 0) {
+    # Create an empty tibble with the same columns as the first dataframe in corrections_new
+    empty_tibble <- tibble::tibble()
+    if (exists("corrections_new[[1]]")) {
+      empty_tibble <- tibble::tibble(!!!setNames(rep(list(character()), ncol(corrections_new[[1]])), names(corrections_new[[1]])))
+    }
+    return(empty_tibble)
+  }
+  
+  # Convert all columns to factor
+  corrections_new <- lapply(corrections_new, function(df) {
+    df[] <- lapply(df, labelled::to_factor)
+    return(df)
+  })
+  
+  # Bind the rows together
+  corrections_new <- bind_rows(corrections_new)
+  
+  return(corrections_new)
+}
+
+
+corrections_new <- bind_corrections(corrections_new)
+
+error_codes <- read_xlsx("error_codes.xlsx")
+
+# Merge with error codes
+if (nrow(corrections_new)>0) {
+  corrections_new <- corrections_new |>
+    left_join(error_codes, by = "ind")
+
+#  Add log creation date BEFORE generating logID
+corrections_new <- corrections_new |> mutate(logCreationDate = Sys.Date())
+
+# Add unique error code for each row based on date and then cumulative count
+corrections_new <- corrections_new |>
+  mutate(logID = paste0(error_code, "-", start_date, "-", row_number()),
+         correctedValue = "",
+         comment = "") |>
+  group_by(logID) |>
+  mutate(logID = paste0(logID, "-", row_number()),
+        completed = "No") |>
+  ungroup()
+  
+# Tidy dataframe
+corrections_new <- corrections_new  |>
+  select(logCode = error_code, logID,
+         issue = ind_name, 
+         uuid = `_uuid`, index = `_index`, enumerator = Enumerator, team = Team, stratum = Stratum, 
+         #`# of interviews by enumerator`,
+         startDate = start_date, startTime = start_time, endDate = end_date, endTime = end_time, interviewOutcome = `Interview outcome`, interviewOutcome_adj = complete_interview,
+         #NUTS1, NUTS2, NUTS3, `HoH name`, `HoH age`, 
+         variable = `Variable`, originalValue = `Original value`, action, correctedValue, completed)
+} else {
+    corrections_new <- tibble(
+      logCode = NA,
+      logID = NA,
+      issue = NA,
+      uuid = NA,
+      index = NA,
+      enumerator = NA,
+      team = NA,
+      stratum = NA,
+      #`# of interviews by enumerator`,
+      startDate = NA,
+      startTime = NA, endDate = NA,
+      endTime = NA,
+      interviewOutcome = NA, interviewOutcome_adj = NA,
+      #NUTS1, NUTS2, NUTS3, `HoH name`, `HoH age`, 
+      variable = NA, 
+      originalValue = NA, action = NA, correctedValue = NA, completed = NA)
+}
+
+#Make sure no cases remain in corrections_new that have already been dealt with
+corrections_new <- corrections_new |>
+  filter(!logID %in% corrections$logID)
+
+# Save to qa list
+corrections_ids_skip <- corrections |>
+  filter(variable != "Intro_06") |> 
+  select(uuid)
+
+qa$corrections <- corrections_new |>
+  filter(!uuid %in% corrections_ids_skip$uuid)
+```
+
+## Anthropometrics sheet
+```{r}
+# Select which tables to include (any that are not present are skipped)
+corrections_anthro_new <- qa[intersect(names(qa), c(
+  "outlier_anthro",
+  "anthro_measure_method",
+  "oedema_check"
+  ))]
+
+corrections_anthro_new <- add_ind_column(corrections_anthro_new)
+
+corrections_anthro_new <- bind_corrections(corrections_anthro_new)
+
+error_codes <- read_xlsx("error_codes.xlsx")
+
+if (nrow(corrections_anthro_new)>0) {
+# Merge with error codes
+corrections_anthro_new <- corrections_anthro_new |>
+  left_join(error_codes, by = "ind")
+
+#  Add log creation date BEFORE generating logID
+corrections_anthro_new <- corrections_anthro_new |> mutate(logCreationDate = Sys.Date())
+
+# Add unique error code for each row based on date and then cumulative count
+corrections_anthro_new <- corrections_anthro_new |>
+  mutate(logID = paste0(error_code, "-", start_date, "-", row_number()),
+         correctedValue = "",
+         completed = "No",
+         comment = "") |>
+  group_by(logID) |>
+  mutate(logID = paste0(logID, "-", row_number())) |>
+  ungroup()
+  
+# Tidy dataframe
+corrections_anthro_new <- corrections_anthro_new  |>
+  select(logCode = error_code, logID,
+         issue = ind_name, 
+         uuid = `_uuid`, index = `_index`, enumerator = Enumerator, team = Team, stratum = Stratum, 
+         #`# of interviews by enumerator`,
+         startDate = start_date, startTime = start_time, endDate = end_date, endTime = end_time, interviewOutcome = `Interview outcome`, interviewOutcome_adj = complete_interview, age_months = `Age (months)`, MUAC_cm = `MUAC (cm)`, weight_kg = `Weight (kg)`, length_height_cm = `Length/height (cm)`, standing_lying = `Standing or lying`, oedema = Oedema,
+         #NUTS1, NUTS2, NUTS3, `HoH name`, `HoH age`, 
+         variable = `Variable`, action, completed)
+
+} else {
+    corrections_anthro_new <- tibble(
+      logCode = NA,
+      logID = NA,
+      issue = NA,
+      uuid = NA,
+      index = NA, 
+      enumerator = NA,
+      team = NA,
+      stratum = NA,
+      #`# of interviews by enumerator`,
+      startDate = NA,
+      startTime = NA, endDate = NA,
+      endTime = NA,
+      interviewOutcome = NA, interviewOutcome_adj = NA,
+      age_months = NA, MUAC_cm = NA, weight_kg = NA, length_height_cm = NA, standing_lying = NA, oedema = NA, 
+      #NUTS1, NUTS2, NUTS3, `HoH name`, `HoH age`, 
+      variable = NA, 
+      originalValue = NA, action = NA, correctedValue = NA, completed = NA)
+}
+
+
+# Remove cases that have already been checked and submitted
+corrections_anthro_new <- anti_join(corrections_anthro_new,
+                                             corrections_anthro,
+                                             by = c("uuid", "variable"))
+
+# Save to qa list
+qa$corrections_anthro <- corrections_anthro_new |>
+  mutate(age_months = as.numeric(as.character(age_months)),
+         MUAC_cm = as.numeric(as.character(MUAC_cm)),
+         weight_kg = as.numeric(as.character(weight_kg)),
+         length_height_cm = as.numeric(as.character(length_height_cm)),
+         standing_lying = case_when(standing_lying == 1 ~ "Standing", TRUE ~ "Lying")
+         )
+
+# Split by team
+#     team_dfs <- df %>%
+#       split(.$Team) %>%
+#       map(~ .x)
+#   }
+#   
+#   return(team_dfs)
+# }
+```
+# Observations
+
+```{r}
+#Define file path for cached observations
+cache_file <- "observations_cache.rds"
+
+# Check if today is Sunday
+if (weekdays(Sys.Date()) == "Wednesday") {
+
+  # Observations Sheet - PETRA
+  observations <- qa[intersect(names(qa), c(
+    "outlier_dem_week",
+    "outlier_response_week",
+    "outlier_response_enum_week",
+    "outlier_refusal_enum_week",
+    #"version_week",
+    "outside_working_hours_enum",
+    "handwashing_ob_week", 
+    "check_skip_all_week"
+    #"outlier_time"
+  ))]
+
+  # Apply function
+  observations <- add_ind_column(observations)
+
+  # # Convert all columns to character before merging
+  # observations <- lapply(observations, function(df) {
+  #   df[] <- lapply(df, as.character)
+  #   return(df)
+  # })
+  
+
+  # Convert all columns to character before merging
+  observations <- lapply(observations, function(df) {
+    df[] <- lapply(df, as.character)
+    return(df)
+  })
+
+  # Merge observations into a single dataframe
+  observations <- bind_rows(observations)
+if (nrow(observations)>0) {
+  # Merge with error codes
+  observations <- observations |>
+    left_join(error_codes, by = "ind")
+
+  # Extract Enumerator ID
+  observations <- observations |>
+    mutate(enumerator_ID = str_extract(Enumerator, "^[0-9]+"))
+
+  # Generate log ID
+  observations <- observations |>
+    mutate(
+      logID = paste0(error_code, "-", week, "-", row_number()),  
+      completed = "No"
+    ) |>
+    ungroup()
+
+  # Select final columns
+  observations <- observations |>
+    select(
+      logCode = error_code, logID,
+      Issue = ind_name,
+      Enumerator, Team, week, `# of interviews by enumerator`, `# of interviews by enumerator in the last week` = `# of interviews by enumerator per week`, `# of complete interviews by enumerator in the last week` = `# of complete interviews by enumerator per week`,
+      Variable = var,Mean_per_Interview, Rate, Count,
+      #`Form version used`,
+      #`Current form version`,
+       `Mean, enumerator` = `Mean, {{ var }}, enumerator`, `Global mean`, `Global SD`,
+       `Upper threshold`, `Lower threshold`,
+      action,
+      completed
+    )
+  
+   observations <- observations |>
+      mutate(
+        Enumerator = as.factor(Enumerator),
+        Team = as.factor(Team)
+      )
+
+  # Save to `qa` list
+  qa$observations <- observations
+
+  # **Save to cache**
+  saveRDS(observations, cache_file)
+} else {
+    observations <- tibble(
+      logCode = NA,
+      logID = NA,
+      Issue = NA,
+      Enumerator = NA,
+      Team = NA,
+      week = NA,
+      `# of interviews by enumerator` = NA,
+      `# of interviews by enumerator in the last week` = NA,
+      Variable = NA,
+      Mean_per_Interview = NA,
+      Rate = NA,
+      Count = NA,
+      `Form version used` = NA,
+      `Current form version` = NA,
+      `Mean, enumerator` = NA,
+      `Global mean` = NA,
+      `Global SD` = NA,
+      `Upper threshold` = NA,
+      `Lower threshold` = NA,
+      action = NA,
+      completed = NA
+    )
+    
+    observations <- observations |>
+      mutate(
+        Enumerator = as.factor(Enumerator),
+        Team = as.factor(Team)
+      )
+}
+} else {
+  # **Load cached observations if not Sunday**
+  if (file.exists(cache_file)) {
+    observations <- readRDS(cache_file)
+    
+    observations <- observations |>
+      mutate(
+        Enumerator = as.factor(Enumerator),
+        Team = as.factor(Team)
+      )
+  } else {
+    observations <- NULL  # Fallback if cache does not exist yet
+  }
+
+}
+
+# Assign observations back to `qa` for Shiny app usage
+qa$observations <- observations
+
+```
+
+## Observations Sheet 
+```{r}
+# # Observations Sheet - PETRA
+
+# Select which tables to include (any that are not present are skipped)
+# observations <- qa[intersect(names(qa), c(
+#   "outlier_dem_week",
+#   "outlier_response_week",
+#   "outlier_response_enum_week",
+#   "outlier_refusal_enum_week",
+#   "version_week",
+#   "outside_working_hours_enum",
+#   "handwashing_ob_week",
+#   "check_skip_all_week"
+# ))]
+# 
+#   # Apply the function to the observations list
+#   observations <- add_ind_column(observations)
+# 
+#   # Convert all columns to character before merging
+#   observations <- lapply(observations, function(df) {
+#     df[] <- lapply(df, as.character)
+#     return(df)
+#   })
+# 
+#   # Merge observations into a single dataframe
+#   observations <- bind_rows(observations)
+# 
+#   # Merge with error codes
+#   observations <- observations |>
+#     left_join(error_codes, by = "ind")
+# 
+#   # Extract the ID of the enumerator to use it for the logID index
+#   library(stringr)  # Ensure stringr is loaded
+# 
+# observations <- observations |>
+#   mutate(enumerator_ID = str_extract(Enumerator, "^[0-9]+"))  # Extract only the number
+# 
+# 
+#     # Ensure all columns exist with NA where missing
+#     #mutate(across(
+#     #  c(`Response Rate`, `Refusal Rate`, `Var`, `Count`, `Enumerator Mean`, `Global Mean`, `Global SD`, `Upper threshold`, `Lower threshold`),
+#     #  ~ ifelse(is.na(.), NA, .)
+#     #))
+#       # Generate log ID in the same format as Corrections
+#   observations <- observations |>
+#     mutate(
+#       logID = paste0(error_code, "-", 
+#                      week, "-", 
+#                      #enumerator_ID, "-", 
+#                      row_number()),
+#       completed = "No"
+#     ) |>
+#     ungroup()
+# 
+#     # Select final columns
+#   observations <- observations |>
+#     select(
+#       logCode = error_code, logID,
+#       Issue = ind_name,
+#       Enumerator, Team, week, `# of interviews by enumerator`, `# of interviews by enumerator in the last week` = `# of interviews by enumerator per week`,
+#       Variable = var, Rate, Count, `Form version used`, `Current form version`,
+#       `Mean, enumerator` = `Mean, {{ var }}, enumerator`, `Global mean`, `Global SD`,
+#       `Upper threshold`, `Lower threshold`,action, completed,
+#     )
+# 
+#   # Save to qa list
+#   qa$observations <- observations
+
+# observations <- qa[intersect(names(qa), c(
+#   "outlier_dem_week",
+#   "outlier_response_week",
+#   "outlier_response_enum_week",
+#   "outlier_refusal_enum_week",
+#   "version_week",
+#   "outside_working_hours_enum",
+#   "handwashing_ob_week",
+#   "check_skip_all_week"
+# ))]
+# 
+#   # Apply the function to the observations list
+#   observations <- add_ind_column(observations)
+# 
+#   # Convert all columns to character before merging
+#   observations <- lapply(observations, function(df) {
+#     df[] <- lapply(df, as.character)
+#     return(df)
+#   })
+# 
+#   # Merge observations into a single dataframe
+#   observations <- bind_rows(observations)
+# 
+#   # Merge with error codes
+#   observations <- observations |>
+#     left_join(error_codes, by = "ind")
+# 
+#   # Extract the ID of the enumerator to use it for the logID index
+#   library(stringr)  # Ensure stringr is loaded
+# 
+# observations <- observations |>
+#   mutate(enumerator_ID = str_extract(Enumerator, "^[0-9]+"))  # Extract only the number
+# 
+# 
+#     # Ensure all columns exist with NA where missing
+#     #mutate(across(
+#     #  c(`Response Rate`, `Refusal Rate`, `Var`, `Count`, `Enumerator Mean`, `Global Mean`, `Global SD`, `Upper threshold`, `Lower threshold`),
+#     #  ~ ifelse(is.na(.), NA, .)
+#     #))
+#       # Generate log ID in the same format as Corrections
+#   observations <- observations |>
+#     mutate(
+#       logID = paste0(error_code, "-", week, "-", enumerator_ID, "-", row_number()),
+#       completed = "No"
+#     ) |>
+#     ungroup()
+# 
+#     # Select final columns
+#   observations <- observations |>
+#     select(
+#       logCode = error_code, logID,
+#       Issue = ind_name,
+#       Enumerator, Team, week, `# of interviews by enumerator`, `# of interviews by enumerator in the last week` = `# of interviews by enumerator per week`,
+#       Variable = var, Rate, Count, `Form version used`, `Current form version`,
+#       `Mean, enumerator` = `Mean, {{ var }}, enumerator`, `Global mean`, `Global SD`,
+#       `Upper threshold`, `Lower threshold`,action, completed,
+#     )
+# 
+#   # Save to qa list
+#   qa$observations <- observations
+
+
+```
+
+
+
+```{r}
+# Total submission and total complete interviews 
+qa$total_submissons <- df_l$hhmain %>% filter(!is.na(Intro_06)) %>% nrow()
+qa$total_complete_interview <- df_l$hhmain %>%
+  filter(complete_interview == 1) %>%
+  count(Intro_06) %>%
+  summarise(total = sum(n)) %>%
+  pull(total)
+
+
+```
+
+```{r}
+#Distribution by COO
+df_origincountry_dist <- df_l$hhmain %>%
+  filter(
+    !is.na(origincountry),
+    !origincountry %in% c("Afghanistan", "Lao People's Democratic Republic", "Dominican Republic", "Democratic People's Rep. of Korea")
+  ) %>%
+  count(origincountry, sort = TRUE) %>%
+  mutate(
+    percent = round(100 * n / sum(n), 1),
+    percent_prop = percent / 100,  # <- for plotting axis
+    label = paste0(percent, "%"),
+    tooltip = paste0(origincountry, "\nN = ", n, "\n", percent, "%")
+  )
+
+
+# qa$p_origincountry <- ggplot(df_origincountry_dist, aes(
+#   x = reorder(origincountry, percent),
+#   y = percent,
+#   fill = origincountry,
+#   text = tooltip
+# )) +
+#   geom_col() +
+#   geom_text(aes(label = label), hjust = 0, nudge_x = 0.01,color = "black",size = 3) +
+# coord_flip() +
+# scale_fill_unhcr_d(palette = "pal_unhcr") +
+# theme_unhcr() +
+# labs(
+#   x = NULL,
+#   y = "Percentage"
+# ) +
+# theme(
+#   legend.position = "none",
+#   plot.margin = margin(t = 5, r = 5, b = 5, l = 5),
+#   axis.text.y = element_text(margin = margin(r = 2))
+# )
+
+qa$p_origincountry <- ggplot(df_origincountry_dist, aes(
+  x = reorder(origincountry, percent_prop),
+  y = percent_prop,
+  fill = origincountry,
+  text = tooltip
+)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_unhcr_d(palette = "pal_unhcr") +
+  scale_y_continuous(labels = scales::percent, expand = expansion(mult = c(0, 0.05))) +
+  theme_unhcr() +
+  labs(
+    x = NULL,
+    y = "Percentage"
+  ) +
+  theme(
+    grid = "X",
+    legend.position = "none",
+    plot.margin = margin(t = 5, r = 5, b = 5, l = 5),
+    axis.text.y = element_text(margin = margin(r = 2))
+  )
+
+
+
+
+
+```
+
+
+```{r}
+# Complete interview by stratum and week 
+
+complete_stratum <- group_function(df_l$hhmain, stratum)
+
+ggplot(complete_stratum, aes(x = weeks_since_begin, y = count, group = stratum, color = stratum)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  labs(
+    title = "Complete interviews by week",
+    x = "Weeks since beginning",
+    y = "Count of complete interviews",
+    color = "Stratum"
+  ) +
+  scale_color_unhcr_d(palette = "pal_unhcr") +
+  theme_unhcr()
+
+```
+
+
+
+# Prepare data
+```{r}
+# Make sure labels appear in key variables
+convert_and_rename <- function(df) {
+  if (is.data.frame(df)) {
+    # Rename variables if they exist
+    if ("Intro_01" %in% names(df)) {
+      df <- df %>% rename(Enumerator = Intro_01)
+    }
+    if ("Intro_01a" %in% names(df)) {
+      df <- df %>% rename(Team = Intro_01a)
+    }
+    
+    variables <- c("Enumerator", "Team", "enumerator", "team", "NUTS1", "NUTS2", "NUTS3", "interviewOutcome")
+    existing_vars <- intersect(variables, names(df))
+    
+    df %>%
+      mutate(across(all_of(existing_vars), ~ labelled::to_factor(.)))
+  } else {
+    df  
+  }
+}
+
+qa <- lapply(qa, convert_and_rename)
+
+```
+
+```{r}
+
+```
+
+```{r}
+#If working offline
+# saveRDS(df_l, "data/df_l.rds")
+# saveRDS(qa, "data/qa.rds")
+```
+
+```{r}
+# Total size of qa list:
+
+size_in_mb <- object.size(qa) / (1024^2)
+print(paste("Size in MB:", round(size_in_mb, 2)))
+
+# Calculate and print the size of each object in the list `qa`
+sizes <- sapply(qa, function(x) object.size(x) / (1024^2))
+sizes_rounded <- round(sizes, 2)
+
+# Print sizes
+print(sizes_rounded)
+```
+
+
+```{r}
+## Save pin to Posit connect server
+#API key saved in .Renviron
+board <- board_connect(auth = "envvar")
+pin_write(board, qa, "XXX/FDS_ZAM_QA", type = "rds")
+```
+

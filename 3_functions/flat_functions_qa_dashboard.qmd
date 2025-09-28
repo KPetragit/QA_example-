@@ -1,0 +1,274 @@
+---
+title: "Functions for FDS QA dashboard"
+format: html
+---
+
+# date_slider
+```{r fun-date_slider}
+# Slider to filter data by date
+date_slider <- function(df, date_column) {
+  min_date <- min(as.Date(df[[date_column]]), na.rm = TRUE)
+  max_date <- max(as.Date(df[[date_column]]), na.rm = TRUE)
+  
+date_slider_ui <- sliderInput("date_range", "Date range:",
+                  min = min_date,
+                  max = max_date,
+                  value = c(min_date, max_date),
+                  timeFormat = "%d-%m")
+
+return(date_slider_ui)
+}
+```
+
+#fun-plot_working_hours
+```{r fun-plot_working_hours}
+plot_working_hours <- function(df) {
+  ggplot(df, 
+      aes(
+        start_hours,
+        fill = to_factor(outside_working_hours)
+      )
+    ) +
+      geom_bar() +
+      labs(fill = "", title = "Interviews outside working hours", guide = "none") +
+      scale_fill_unhcr_d(
+        palette = "pal_unhcr",
+        nmax = 2,
+        order = 2:1
+      ) +
+      theme_unhcr()
+}
+```
+
+# plot_progress_bar
+```{r fun-plot_progress_bar}
+plot_progress_bar <- function(df, target) {
+  total <- target
+  progress <- df %>% 
+    filter(complete_interview == 1) %>%
+    nrow()
+  
+  percentage <- progress / total
+  
+  dat <- tibble::tibble(
+    category = c("complete", "remaining"),
+    value = c(progress, total - progress)
+  )
+  
+  plot_pb <- ggplot(dat, aes(x = 1, y = value, fill = category)) +
+    geom_col(position = "stack", width = 0.5) +
+    scale_fill_manual(values = c("complete" = "#044F85", "remaining" = "#0072BC")) +
+    geom_text(aes(label = value), vjust = -0.5, color = "white", size = 5) +
+    theme_unhcr(legend = FALSE, grid = "", ) +
+    labs(title = paste0("Progress: ", scales::percent(percentage)),
+         x = NULL, y = "Interviews") +
+    coord_flip()
+  
+  print(plot_pb)
+}
+```
+
+# plot_dem_outliers
+```{r fun-plot_dem_outliers}
+plot_dem_outliers <- function(df) {
+ plot_outliers <- ggplot(
+        aes(val)
+    ) +
+      geom_bar(fill = unhcr_pal(n = 1, "pal_unhcr")) +
+      facet_wrap(~var, scales = "free") +
+      theme_unhcr()
+ 
+ return(plot_outliers)
+}
+```
+
+# plot_distr
+```{r fun-plot_distr}
+plot_distr <- function(df) {
+  df |> 
+    select(Intro_06, params$vars_outliers) |>
+    select(Intro_06, is.numeric) |>
+    pivot_longer(
+          cols = -Intro_06,
+          values_to = "val",
+          names_to = "var"
+        ) |>
+        filter(!is.na(val)) |>
+    ggplot(
+              aes(val)
+    ) +
+      geom_histogram(fill = unhcr_pal(n = 1, "pal_unhcr")) +
+      facet_wrap(~var, scales = "free") +
+    theme_unhcr()
+}
+```
+
+# plot_daily_interviews
+```{r fun-plot_daily_interviews}
+plot_daily_interviews <- function(df) {
+  plot_di <- df %>%
+    ggplot(aes(x = start_date,
+               y = n_daily)) +
+    geom_col(fill = unhcr_pal(n = 1, "pal_unhcr")) +
+    geom_line(aes(x = start_date,
+                  y = mean_daily_week),
+              col = unhcr_pal(n = 2, "pal_unhcr")[2],
+              group = 1) +
+    theme_unhcr()
+
+return(plot_di)
+}
+```
+
+# first_second_duplicates
+```{r fun-first_second_duplicates}
+first_second_duplicates <- function(df) {
+  df <- df |>
+    group_by(code) |>
+    mutate(
+      first = ifelse(row_number() == 1, Team, NA),
+      second = ifelse(row_number() == 2, Team, NA)
+    )  %>%
+    fill(first, .direction = "down") %>%
+    fill(second, .direction = "up") |>
+    mutate(Note = ifelse(
+      row_number() == 1,
+      paste(
+        "Voir fiche pour l'équipe", second, "pour identifier le doublon correspondant"
+      ),
+      paste(
+        "Voir fiche pour l'équipe", first, "pour identifier le doublon correspondant"
+      )
+    )) |>
+    ungroup() |>
+    select(-first,-second)
+  
+  return(df)
+}
+```
+
+# create_qa_ts
+```{r fun-create_qa_ts, eval = FALSE}
+# create_qa_ts <- function(hhmain, hhroster, plot_roster_info, ScProtec02_group, audit, anthro_sheet, lang = "EN") {
+#     df <- bind_rows(
+#       #Para-data
+#       #audit |> duration_ts(hhmain) |>  mutate(code = "010", Note = ""),
+#       #hhmain |> outside_working_hours_ts() |>  mutate(code = "020", Note = ""),
+#       hhmain |> check_roles_interviewers_ts() |> mutate(code = "030", Note = "") |> select(-start_time, -end_time) |> mutate(`HoH age` = as.character(`HoH age`)) ,
+#       #Outcomes
+#       hhmain |> response_rate_enum_ts() |> mutate(code = "110", Note = "") |> select(-start_time, -end_time) |> mutate(`HoH age` = as.character(`HoH age`)) ,
+#       hhmain |> refusal_rate_enum_ts() |> mutate(code = "120", Note = "") |> select(-start_time, -end_time) |> mutate(`HoH age` = as.character(`HoH age`)),
+#       #Duplicates (need to include twice in case different teams concerned)
+#       hhmain |> check_duplicates_ts("Intro_06") |> 
+#         mutate(code = paste0("210-", `Original value`)) |> 
+#         first_second_duplicates() |> 
+#           select(-start_time, -end_time) |> 
+#           mutate(`HoH age` = as.character(`HoH age`)),
+#       hhmain |> check_duplicates_ts("telHoH") |>
+#         mutate(code = paste0("220-", `Original value`)) |>
+#         first_second_duplicates() |> 
+#         select(-start_time, -end_time) |> 
+#         mutate(`HoH age` = as.character(`HoH age`)),
+#       #hhroster |> check_duplicates_ts(HH_01b, in_hh = TRUE) |> mutate(code = paste0("230-", `Original value`)) |>
+#         #first_second_duplicates(),
+#       #ScProtec02_group |> check_duplicates_ts(ScProtec02, in_hh = TRUE)  |> mutate(code = paste0("240-", `Original value`)) |>         first_second_duplicates(),
+#       #plot_roster_info |> check_duplicates_ts(currentplot, in_hh = TRUE)  |> mutate(code = paste0("250-", `Original value`)) |> 
+#       #  first_second_duplicates(),
+#       #Data quality
+#       hhmain |> handwashing_ob_ts() |> mutate(code = "260", Note = "") |> select(-start_time, -end_time) |> mutate(`HoH age` = as.character(`HoH age`)),
+#       hhmain |> check_skip_all_ts() |>  mutate(code = "270", Note = "") |> select(-start_time, -end_time) |> mutate(`HoH age` = as.character(`HoH age`)),
+#       hhmain |> check_sd_rowwise_map_ts(params$vars_outliers) |> mutate(code = "280", Note = "") |> select(-start_time, -end_time) |> mutate(`HoH age` = as.character(`HoH age`)),
+#       #hhmain |> z_scores_anthro_ts() |>  mutate(code = "290", Note = ""),
+#       # anthro_sheet |> select(-Intro_06, -`Household size`) |>  mutate(code = "290", Note = "") |> mutate(`HoH age` = as.character(`HoH age`)) |> select(-start_time, -end_time)
+#     )  |>
+#       to_factor()
+#     
+#     
+#     
+#       if (lang == "FR") {
+#     df <- df %>%
+#       rename(
+#         `Agent` = Enumerator,
+#         `Équipe` = Team,
+#         `# d'entretiens par l'agent` = `# of interviews by enumerator`,
+#         #`Taille du ménage` = `Household size`,
+#         `Date début` = start_date,
+#         #`Heure début` = start_time,
+#         `Date fin` = end_date,
+#         #`Heure fin` = end_time,
+#         `Résultat de l'entretien` = `Interview outcome`,
+#         `Région` = NUTS1,
+#         `Département` = NUTS2,
+#         `Commune` = NUTS3,
+#         `Nom chef de ménage` = `HoH name`,
+#         `Age chef de ménage` = `HoH age`,
+#         `Valeur initiale` = `Original value`,
+#         `Problème identifié` = Issue,
+#         `Nouvelle valeur (à saisir)` = `New value`,
+#         `Action/réponse` = Action
+#       ) |>
+#       mutate(
+#         `Problème identifié` = case_when(
+#           `Problème identifié` == "Refusal rate is particularly high" ~ "Le taux de refus de l'agent est particulièrement élevé",
+#           `Problème identifié` == "Duplicate entry needs to be checked" ~ "Les doublons doivent être vérifiés",
+#           `Problème identifié` == "Interview duration is short for the household size" ~ "La durée de l'entretien est courte par rapport à la taille du ménage",
+#           `Problème identifié` == "Enumerator rarely observes handwashing facility" ~ "L'agent observe rarement l'installation de lavage des mains",
+#           `Problème identifié` == "Enumerator frequently selects NO for first questions of module, skipping module (value shows % of interviews where module was completed)" ~ "L'agent sélectionne fréquemment NON aux premières questions du module et saute le module (la valeur indique le % d'interviews où le module a été complété)",
+#           `Problème identifié` == "Interview started and ended outside expected working hours" ~ "L'entretien a commencé et s'est terminé en dehors des heures de travail prévues",
+#                     `Problème identifié` == "Value seems high, please check" ~ "La valeur semble élevée, veuillez vérifier", 
+#                     `Problème identifié` == "Value seems low, please check" ~ "La valeur semble basse, veuillez vérifier",                     
+#           `Problème identifié` == "Value seems too high for age, please check" ~ "La valeur semble trop élevée pour l`âge, veuillez vérifier", 
+#                     `Problème identifié` == "Value seems too low for age, please check" ~ "La valeur semble trop basse pour l`âge, veuillez vérifier", 
+#           TRUE ~ `Problème identifié`
+#         )
+#       )
+#     
+#       team_dfs <- df %>%
+#   split(.$Équipe) %>%
+#   map(~ .x)
+#       }
+# 
+#           if (lang == "EN") {
+#   team_dfs <- df %>%
+#   split(.$Team) %>%
+#   map(~ .x)
+#           }
+#   
+#   return(team_dfs)
+# }
+```
+
+
+# create_qa_list
+```{r fun-create_qa_list}
+create_qa_list <- function(hhmain, hhroster, plot_roster_info, ScProtec02_group) {
+
+qa_ind <- list()
+qa_ind$`Apercu équipes` <- df_l$hhmain |> team_summary()
+qa_ind$`Apercu enquêteurs` <- df_l$hhmain |> enumerator_summary()
+qa_ind$`Productivité enquêteurs` <- df_l$hhmain |> daily_interviews(Intro_01)
+qa_ind$`Version questionnaire` <- df_l$hhmain |> check_version()
+qa_ind$`Taux de réponse` <- df_l$hhmain |> response_rate_group(group = Intro_01) 
+qa_ind$`Taux de refus` <- df_l$hhmain |> refusal_rate_enum()
+qa_ind$`Doublants ID` <- df_l$hhmain |> check_duplicates_ts(Intro_06)
+#qa_ind$`Doublants ID remplacement` <- check_duplicates(hhmain, Intro_18)
+qa_ind$`Doublants numéro de téléphone` <- hhmain |> check_duplicates(telHoH)
+qa_ind$`Doublants nom du chef de ménage` <- hhroster |> check_duplicates(HH_01b)
+#qa_ind$`Doublants programme d'aide` <- ScProtec02_group |> check_dupl(ScProtec02)
+qa_ind$`Doublants parcelle` <- plot_roster_info |> check_dupl(currentplot)
+#qa_ind$dupl_HoH <- hhroster |> filter(HH_03 == "1") |> check_dupl(HH_03)
+qa_ind$`Valeurs manquantes` <- hhroster |>
+  combine_missing(all_of(params$vars_check_missing))
+qa_ind$`Valeurs aberrantes` <- hhmain |> check_sd_rowwise_map(params$vars_outliers)
+qa_ind$`Entretiens par mesurer/chef d'equipe` <-  hhmain |> check_roles_interviewers_ts()
+#qa_ind$`Valeurs aberrantes dem` <- check_outlier_dem(df_l$hhroster, df_l$hhmain)
+qa_ind$`Sauts` <- hhmain |> check_skip_all()
+qa_ind$`Observations` <- hhmain |> handwashing_ob()
+qa_ind$`Fréquent DK REF` <- hhmain |> outlier_response_vars()
+qa_ind$`Délai de soumission` <- hhmain |> outside_working_hours_tab()
+
+return(qa_ind)
+}
+```
+
+

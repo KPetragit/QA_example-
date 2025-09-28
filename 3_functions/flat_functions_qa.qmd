@@ -1,0 +1,2909 @@
+---
+title: "Functions for FDS quality analysis"
+format: html
+execute: 
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r development, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(haven)
+library(lubridate)
+library(rlang)
+library(zscorer)
+```
+
+# haven_to_factor
+```{r fun-haven_to_factor}
+haven_to_factor <- function(df) {
+  df <- df %>%
+    mutate(across(c(Final_01), to_factor))
+}
+```
+
+# complete_interview
+```{r fun-complete_interview}
+complete_interview <- function(df, key_vars) {
+  df <- df |>
+    ungroup() %>%
+    mutate(
+      nmissing_key_vars = rowSums(
+        is.na(
+          select(., all_of(key_vars))
+        )
+      ),
+      complete_interview = case_when(
+        nmissing_key_vars < 4 ~ 1,
+        nmissing_key_vars >= 4  ~ 0
+      )
+    )
+
+  return(df)
+}
+```
+
+# complete_interview_2
+```{r fun-complete_interview2}
+complete_interview_2 <- function(df, key_vars) {
+  df <- df |>
+    ungroup() %>%
+    mutate(
+      nmissing_key_vars = rowSums(
+        is.na(
+          select(., all_of(key_vars))
+        )
+      ),
+      complete_interview = case_when(
+        nmissing_key_vars < 4 & Final_01 %in% c("1", "2") ~ 1 ,
+        nmissing_key_vars >= 4 | !Final_01 %in% c("1", "2")~ 0
+      )
+    )
+
+  return(df)
+}
+```
+
+# eligible_unit
+```{r fun-eligible_unit}
+eligibile_unit <- function(df) {
+  df <- df |>
+    mutate(eligible_unit = case_when(
+      Final_01 %in% c(1, 2, 3, 21, 22, 23, 24, 25) ~ 1,
+      Final_01 %in% c(32, 33, 34, 35, 41, 42, 43) ~ 0
+    ))
+}
+```
+
+# eligible_unit_responserate
+```{r fun-eligible_unit_resprate}
+eligibile_unit_resprate <- function(df) {
+  df <- df |>
+    mutate(eligible_unit_resprate = case_when(
+      Final_01 %in% c(1, 2, 3, 21, 22, 23, 24, 25, 32) ~ 1,
+      Final_01 %in% c(33, 34, 35, 41, 42, 43) ~ 0
+    ))
+}
+```
+
+# eligible_unit_refusalrate
+```{r fun-eligible_unit_refrate}
+eligibile_unit_refrate <- function(df) {
+  df <- df |>
+    mutate(eligible_unit_refrate = case_when(
+      Final_01 %in% c(1, 2, 3, 21, 22) ~ 1,
+      Final_01 %in% c(23, 24, 25, 32, 33, 34, 35, 41, 42, 43) ~ 0
+    ))
+}
+```
+
+# refusal_interview
+```{r fun-refusal_interview}
+refusal_interview <- function(df) {
+  df <- df |>
+    mutate(refusal_interview = case_when(
+      Final_01 %in% c("3","21", "22") ~ 1,
+      TRUE ~ 0
+    ))
+}
+```
+
+# date_vars
+```{r fun-date_vars}
+date_vars <- function(df, tz_loc, work_hours = params$work_hours) {
+  df <- df |>
+  group_by(`_uuid`) |>
+  mutate(start_date = as.Date(format(min(start, na.rm = TRUE), format = "%Y-%m-%d")),
+         end_date = as.Date(format(max(end, na.rm = TRUE), format = "%Y-%m-%d")),
+         duration_net = end-start,
+         start_time = format(start, format = "%H:%M"),
+         end_time = format(end, format = "%H:%M")) |> 
+  ungroup() |>
+    mutate(
+      start_loc = as.POSIXct(start, format = "%Y-%m-%d %H:%M:%S", tz = tz_loc),
+      end_loc = as.POSIXct(`_submission_time`, format = "%Y-%m-%d %H:%M:%S", tz = tz_loc),
+      start_time = format(start_loc, format = "%H:%M"),
+      end_time = format(end_loc, format = "%H:%M"),
+      start_date = format(start_loc, format = "%Y-%m-%d"),
+      end_date = format(end_loc, format = "%Y-%m-%d"),
+      start_hours = as.numeric(substr(start_time, 1, 2)),
+      end_hours = as.numeric(substr(end_time, 1, 2)),
+      current_date_num = as.numeric(as.Date(start_date, format = "%Y-%m-%d")),
+      days_since_begin = current_date_num - min(current_date_num, na.rm = TRUE) + 1,
+      week = floor(days_since_begin / 7) + 1,
+      outside_working_hours = case_when(
+        !is.na(start_hours) & !is.na(end_hours) & !start_hours %in% work_hours & !end_hours %in% work_hours ~ 1,
+        TRUE ~ 0
+      
+      )
+    )
+
+  return(df)
+}
+```
+
+# current_version
+```{r fun-current_version}
+current_version <- function(df, version_var) {
+
+  if (!is.numeric(df[[deparse(substitute(version_var))]])) {
+    df <- df |>
+      mutate(version_num = as.numeric(as.character({{ version_var }}))) |>
+      group_by(source, start_date) |>
+      mutate(current_version_num = max(version_num, na.rm = TRUE)) |>
+      ungroup()
+  } else {
+    df <- df |>
+      group_by(source, start_date) |>
+      mutate(current_version_num = max({{ version_var }}, na.rm = TRUE)) |>
+      ungroup()
+  }
+  return(df)
+
+  df |>
+    mutate(version_num = as.numeric({{ version_var }})) |>
+    group_by(source, start_date) |>
+    mutate(current_version_num = max(version_num, na.rm = TRUE)) |>
+    ungroup()
+
+}
+```
+
+# working_hours
+```{r fun-working_hours}
+working_hours <- function(df, work_hours = params$work_hours) {
+  df <- df %>%
+    mutate(outside_working_hours = case_when(
+        !is.na(start_hours) & !is.na(end_hours) & !start_hours %in% work_hours & !end_hours %in% work_hours ~ 1,
+        TRUE ~ 0
+    ))
+  return(df)
+}
+```
+
+
+# outside_working_hour_enum
+```{r fun-outside_working_hours_enum}
+outside_working_hours_enum <- function(dat, 
+                                     work_hours = params$work_hours, 
+                                     threshold = params$threshold_outside_hours) {
+  # Use the existing working_hours() function to flag interviews outside working hours
+  dat <- working_hours(dat, work_hours)
+  
+  ref_outside_week <- dat |> 
+    filter(week == max(week, na.rm = TRUE)) |>  # Keep only last week's data
+    group_by(Intro_01, Intro_01a, n_interviews_enum, week, n_interviews_week, n_interviews_week_complete) |> 
+    summarize(
+      count = sum(outside_working_hours, na.rm = TRUE),  # Count of interviews outside working hours
+      rate = count / n_interviews_week  # Proportion of interviews outside working hours
+    ) |> 
+    ungroup() |> 
+    filter(rate > threshold) |>  # Filter enumerators exceeding the threshold
+    mutate(rate = percent(rate, accuracy = 0.1),
+           var = "Interviews outside working hours" ) |> 
+    rename(
+      Enumerator = Intro_01,
+      Team = Intro_01a,
+      `# of interviews by enumerator` = n_interviews_enum,
+      `# of interviews by enumerator per week` = n_interviews_week,
+      `# of complete interviews by enumerator per week` = n_interviews_week_complete,
+      `Count` = count,
+      `Rate` = rate
+    ) |> 
+   distinct()|> 
+    mutate(
+      Enumerator = haven::as_factor(Enumerator),  ### PRESERVE LABELS
+      Team = haven::as_factor(Team)               ### PRESERVE LABELS
+    )
+  
+  return(ref_outside_week)
+}
+
+```
+
+# duration_net
+```{r fun-duration_net}
+duration_net <- function(df) {
+  df <- df |>
+    group_by(`_uuid`) |>
+    mutate(start_time = format(min(start, na.rm = TRUE), format = "%H:%M")) |>
+    mutate(end_time = format(max(end, na.rm = TRUE), format = "%H:%M")) |>
+    ungroup() |>
+    group_by(start_date, start_time, end_date, end_time, `_uuid`, Intro_01, Intro_01a, n_interviews_enum, Intro_07_lbl, Final_01, ID_11_picture, ID_11_pictureRA, AN_05b, AN_7b, AN_10b, Intro_03a_NUTS1, Intro_03b_NUTS2, Intro_03c_NUTS3, stratum, HeadName, HeadAge)  |>
+    summarise(duration = round(sum(as.numeric(duration), na.rm = TRUE)/60, 2)) |>
+    ungroup() |>
+    group_by(`_uuid`) |> 
+    filter(duration == max(duration)) |>
+    ungroup()
+
+  return(df)
+}
+```
+
+# duration_tab
+```{r fun-duration_tab}
+duration_tab <- function(df_duration, df_hhmain) {
+  df <- df_duration |>
+    filter((duration < params$duration_enum & HHsize > 1) | duration < params$duration_enum/2) |>
+    arrange(duration) |>
+    select(start_date, start_time, end_date, end_time, `_uuid`, `Duration (minutes)` = duration, `Interview outcome` = Final_01, 
+      NUTS1 = Intro_03a_NUTS1, NUTS2 = Intro_03b_NUTS2, NUTS3 = Intro_03c_NUTS3, Stratum = stratum, `HoH name` = HeadName, `HoH age` = HeadAge, everything()) |> 
+    rename(Enumerator = Intro_01,
+           Team = Intro_01a,
+            `# of interviews by enumerator` = n_interviews_enum) 
+  
+  return(df)
+}
+```
+
+# duration_ts
+```{r fun-duration_ts}
+duration_ts <- function(df, df_hhmain) {
+  df %>%
+    duration_tab(df_hhmain) %>%
+    mutate(Variable = "", Issue = paste0("Interview duration is short for the household size"), `New value` = "", Action = "", val = as.character(`Duration (minutes)`)) %>%
+    select(`_uuid`, Enumerator, Team, `# of interviews by enumerator`, start_date, start_time, end_date, end_time,Variable, `Interview outcome`, 
+      NUTS1, NUTS2, NUTS3, Issue, `HoH name`, `HoH age`, `Original value` = val, Stratum, `New value`, Action)
+}
+```
+
+# check_replacement_code
+```{r fun-check_replacement_code}
+check_replacement_code <- function(df, df_sample) {
+  df_Intro_18a <- df_l$hhmain %>%
+    filter(!is.na(Intro_18a))
+    select(`_uuid`, sample_id = Intro_18a)
+
+  id_errors <- anti_join(df_Intro_18a, df_sample, by = "name") |>
+    left_join(df) |>
+    select(
+      start_date,
+      start_time,
+      end_date,
+      end_time,
+      `_uuid`,
+      `Interview outcome` = Final_01,
+      Enumerator = Intro_01,
+      Team = Intro_01a,
+      `# of interviews by enumerator` = n_interviews_enum,
+      NUTS1 = Intro_03a_NUTS1,
+      NUTS2 = Intro_03b_NUTS2,
+      NUTS3 = Intro_03c_NUTS3,
+      Stratum = stratum,
+      `HoH name` = HeadName,
+      `HoH age` = HeadAge
+    ) |>
+    mutate(
+      Variable = "Intro_18a",
+      `Original value` = sample_id,
+      `New value` = "",
+      Issue = "Replaced household ID entered in Intro_18a does not match any ID in sample, please correct.",
+      Action = ""
+    ) |>
+    ungroup()
+  
+}
+```
+
+
+# outside_working_hours_ts
+```{r fun-outside_working_hours_ts}
+outside_working_hours <- function(df) {
+  df <- df |>
+    filter(complete_interview == 1, outside_working_hours  == 1)  |>
+    select(
+      start_date,
+      start_time,
+      end_date,
+      end_time,
+      `_uuid`,
+      `Interview outcome` = Final_01,
+      Enumerator = Intro_01,
+      Team = Intro_01a,
+      `# of interviews by enumerator` = n_interviews_enum,
+      NUTS1 = Intro_03a_NUTS1,
+      NUTS2 = Intro_03b_NUTS2,
+      NUTS3 = Intro_03c_NUTS3,
+      Stratum = stratum,
+      `HoH name` = HeadName,
+      `HoH age` = HeadAge
+    )  |>
+    mutate(
+      Variable = "start_time/end_time",
+      `Original value` = "",
+      `New value` = "",
+      Issue = "Interview started and ended outside expected working hours",
+      Action = ""
+    ) |>
+    ungroup()
+  
+  return(df)
+}
+```
+
+# calculate_rate
+```{r fun-calculate_rate}
+calculate_rate <- function(dat, group_var = NULL, var, eligible_var) {
+  dat |>
+    group_by({{ group_var }}) |>
+    summarize(rate = sum({{ var }}, na.rm = TRUE) / sum({{ eligible_var }}, na.rm = TRUE))
+}
+```
+
+# response_rate_total
+```{r fun-response_rate_total}
+response_rate_total <- function(df) {
+  rr <- calculate_rate(df,
+    var = complete_interview,
+    eligible_var = eligible_unit_resprate
+  ) |>
+    pull() %>%
+    percent(., accuracy = 0.1)
+
+  return(rr)
+}
+```
+
+# response_rate_group
+```{r fun-response_rate_group}
+response_rate_group <- function(df, group, threshold = params$threshold_rr) {
+  rr_s <- calculate_rate(
+    dat = df,
+    group_var = {{ group }},
+    var = complete_interview,
+    eligible_var = eligible_unit_resprate
+  ) |>
+    filter(rate < threshold) |>
+    mutate(rate = percent(rate, accuracy = 0.1)) |> 
+    rename(`Response rate` = rate)
+
+  return(rr_s)
+}
+```
+
+# response_rate_enum
+```{r fun-response_rate_enum}
+response_rate_enum <- function(dat, threshold = params$threshold_rr) {
+  ref_r <- dat |>
+    filter(n_interviews_enum > 3) |> 
+    group_by(Intro_01, Intro_01a, n_interviews_enum) |>
+    summarize(rate = sum(complete_interview, na.rm = TRUE) / sum(eligible_unit_resprate, na.rm = TRUE)) |>
+    ungroup() |>
+    filter(rate < threshold) |>
+    mutate(rate = percent(rate, accuracy = 0.1)) |>
+    rename(Enumerator = Intro_01, Team = Intro_01a, `# of interviews by enumerator` = n_interviews_enum, `Response rate` = rate, `# of interviews by enumerator` = n_interviews_enum) |>
+    ungroup()
+  return(ref_r)
+}
+```
+
+# response_rate_enum_week
+```{r fun-response_rate_enum_week}
+response_rate_enum_week <- function(dat, threshold = params$threshold_rr) {
+  ref_r_week <- dat |> 
+    filter(n_interviews_week > 3) |> 
+    filter(weeks_since_begin == max(weeks_since_begin, na.rm = TRUE)) |>  
+    group_by(Intro_01, Intro_01a, n_interviews_enum, week, n_interviews_week, n_interviews_week_complete) |>
+    summarize(rate = sum(complete_interview, na.rm = TRUE) / sum(eligible_unit_resprate, na.rm = TRUE)) |>
+    ungroup() |>
+    filter(rate < threshold) |>
+    mutate(rate = percent(rate, accuracy = 0.1),
+           var = "Response rate") |>
+    rename(Enumerator = Intro_01, Team = Intro_01a, 
+           `# of interviews by enumerator` = n_interviews_enum, 
+           `Rate` = rate, `# of interviews by enumerator per week` = n_interviews_week, `# of complete interviews by enumerator per week` = n_interviews_week_complete) |>   
+    ungroup() |> 
+  mutate(
+    Enumerator = haven::as_factor(Enumerator),  ### PRESERVE LABELS
+    Team = haven::as_factor(Team)               ### PRESERVE LABELS
+  )
+
+  return(ref_r_week)
+}
+```
+
+
+# response_rate_enum_ts
+```{r fun-response_rate_enum_ts}
+response_rate_enum_ts <- function(dat, threshold = params$threshold_rr) {
+  response_r_ts <- dat |>
+    ungroup() |>
+    response_rate_enum() |>
+    rename(`Original value` = `Response rate`) |>
+    mutate(`_uuid` = "", Variable = "", start_date = NA_Date_, start_time = NA_Date_, end_date = NA_Date_, end_time = NA_Date_, Issue = "Response rate is particularly low", `New value` = "", Action = "", `New value` = "", Action = "", `Interview outcome` = "", NUTS1 = "", NUTS2 = "", NUTS3 = "", Stratum = "", `HoH name` = "",  `HoH age` = "") 
+  return(response_r_ts)
+}
+```
+
+# daily_interviews
+```{r fun-daily_interviews}
+daily_interviews <- function(df, group_var = NULL) {
+  di <- df |>
+    filter(complete_interview == 1) |>
+    group_by(start_date, week, {{ group_var }}) |>
+    summarise(`# of interviews` = n()) |>
+    ungroup() |>
+    group_by(week) |>
+    mutate(mean_daily = round(mean(`# of interviews`)/7, 2)) |>
+    ungroup() %>%
+    pivot_wider(names_from = week, values_from = mean_daily, names_prefix = "Mean, week ") |>
+    rename(Date = start_date)
+
+  return(di)
+}
+```
+
+daily_interviews_grouped
+```{r fun-daily_interviews_grouped}
+daily_interviews_grouped <- function(df, group_var = NULL) {
+  di <- df |>
+    filter(complete_interview == 1) |>
+    group_by(start_date, weeks_since_begin, {{ group_var }}) |>
+    summarise(n_daily = n()) |>
+    ungroup() |>
+    group_by(weeks_since_begin, {{ group_var }}) |>
+    summarise(mean_daily = round(sum(n_daily)/7, 2)) |>
+    ungroup() %>%
+    pivot_wider(names_from = weeks_since_begin, values_from = mean_daily)
+
+  # Add week prefix
+  di <- di |>
+    rename_with(~ ifelse(.x != names(di)[1], paste0("Week ", .x), .x))
+
+  return(di)
+}
+```
+
+daily_interviews_grouped2
+```{r fun-daily_interviews_grouped2}
+daily_interviews_grouped2 <- function(df, group_var = NULL) {
+  di <- df |>
+    filter(complete_interview == 1) |>
+    group_by(start_date, weeks_since_begin, {{ group_var }}) |>
+    summarise(n_daily = n()) |>
+    ungroup() |>
+    group_by(weeks_since_begin, {{ group_var }}) |>
+    summarise(mean_daily = round(sum(n_daily)/7, 2)) |>
+    ungroup() |>
+    mutate(mean_daily = case_when(
+        mean_daily >= 0 & mean_daily < 0.5 ~ "0-0.5",
+        mean_daily >= 0.5 & mean_daily < 1 ~ "0.5-1",
+        mean_daily >= 1 & mean_daily < 1.5 ~ "1-1.5",
+        mean_daily >= 1.5 & mean_daily < 2 ~ "1.5-2",
+        mean_daily >= 2 & mean_daily < 2.5 ~ "2-2.5",
+        mean_daily >= 2.5 & mean_daily < 3 ~ "2.5-3",
+        mean_daily >= 3 ~ "3+",
+        is.na(mean_daily) ~ NA_character_ 
+    ))
+
+  return(di)
+}
+```
+
+# expected_duration
+```{r fun-expected_duration}
+expected_duration <- function(dat, sample) {
+  di <- dat |>
+    filter(complete_interview == 1,
+           start_date < Sys.Date() - 5) |>
+    mutate(Region = substr(Intro_01a, 1, nchar(Intro_01a) - 2),
+           last3weeks = case_when(start_date >= max(start_date, na.rm = T) - 21 ~ 1,
+                                  TRUE ~ 0),
+           lastweek = case_when(start_date >= max(start_date, na.rm = T) - 7 ~ 1,
+                                TRUE ~ 0),
+           n_days = as.numeric(max(start_date, na.rm = T) - min(start_date, na.rm = T))) |>
+    group_by(Region) |>
+    mutate(`Number of teams` = n_distinct(Intro_01a),
+           `Number of enumerators` = n_distinct(Intro_01[Intro_01_role == "Agent"]),
+           Total = n()) |> 
+    mutate(`S1 Mean daily` = round(Total/n_days, 2)) |>
+    ungroup() |>
+    group_by(Region, last3weeks) |>
+    mutate(`S2 Mean daily last three weeks` = round(n()/21, 2)) |>
+    ungroup() |>
+    group_by(Region, lastweek) |>
+    mutate(`S3 Mean daily last week` =  round(n()/7, 2)) |>
+    ungroup() |>
+    group_by(Region) |>
+    filter(start_date == max(start_date)) |>
+    ungroup() |>
+    select(Region, `Number of teams`, `Number of enumerators`, Total, `S1 Mean daily`, `S2 Mean daily last three weeks`, `S3 Mean daily last week`) |>
+    add_row(Region = "Douala", `Number of teams` = 2, `Number of enumerators` = 4, Total = 0, `S1 Mean daily` = 0, `S2 Mean daily last three weeks` = 0, `S3 Mean daily last week` = 0) |>
+    add_row(Region = "Yaounde", `Number of teams` = 2, `Number of enumerators` = 4, Total = 0, `S1 Mean daily` = 0, `S2 Mean daily last three weeks` = 0, `S3 Mean daily last week` = 0) |>
+    mutate(`S4 2 interviews per enumerator 6 days a week` = `Number of enumerators`*2*(6/7)) |>
+    mutate(`S5 3 interviews per enumerator 6 days a week` = `Number of enumerators`*3*(6/7)) |>
+    distinct()
+  
+  sample_reg <- sample |>
+    filter(category != 2) |>
+    ungroup() |>
+    group_by(region, replace) |>
+    summarise(target = n()) |>
+    filter(target == max(target)) |> 
+    ungroup() |>
+    select(region, Target = target) |>
+    mutate(region = case_when(region == "Centre" ~ "Yaounde",
+                              region == "Littoral" ~ "Douala",
+                              TRUE ~ region))
+  
+  di_t <-
+    merge(di,
+          sample_reg,
+          by.x = "Region",
+          by.y = "region",
+          all = TRUE) |>
+    mutate(
+      Pending = Target - Total,
+      `S1 remaining days` = round(Pending / `S1 Mean daily`, 2),
+      `S2 remaining days` = round(Pending / `S2 Mean daily last three weeks`, 2),
+      `S3 remaining days` = round(Pending / `S3 Mean daily last week`, 2),
+      `S4 remaining days` = round(Pending / `S4 2 interviews per enumerator 6 days a week`, 2),
+      `S5 remaining days` = round(Pending / `S5 3 interviews per enumerator 6 days a week`, 2),
+      `Completion S1: Mean daily interviews` = Sys.Date() + `S1 remaining days`,
+      `Completion S2: Mean daily interviews in last three weeks` = Sys.Date() +
+        `S2 remaining days`,
+      `Completion S3: Mean daily interviews in last week` = Sys.Date() +
+        `S3 remaining days`,
+      `Completion S4: 2 interviews per enumerator 6 days a week` = case_when(
+        Region %in% c("Yaounde", "Douala") ~ as.Date("2024-09-13") +`S4 remaining days`,
+        TRUE ~ NA_Date_
+      ),
+      `Completion S5: 3 interviews per enumerator 6 days a week` = case_when(
+        Region %in% c("Yaounde", "Douala") ~ as.Date("2024-09-13") + `S5 remaining days`,
+        TRUE ~ NA_Date_
+      )
+    ) 
+  
+  return(di_t)
+}
+```
+
+# handwashing_ob
+```{r fun-handwashing_ob}
+handwashing_ob <- function(df, threshold = params$threshold_hw_ob) {
+  df <- df |>
+    mutate(handwashing_ob = case_when(
+      HW2_OB %in% c(4, 5) |
+        is.na(HW2_OB) ~ 0,
+      TRUE ~ 1
+    )) |>
+    group_by(Intro_01, Intro_01a, n_interviews_enum) |>
+    summarise(handwashing_ob = percent(mean(handwashing_ob*100, na.rm = TRUE))) |>
+    ungroup() |>
+    filter(handwashing_ob < threshold,
+           n_interviews_enum > 3) |>
+    distinct(Enumerator = Intro_01, Team = Intro_01a, `# of interviews by enumerator` = n_interviews_enum, `Observed handwashing facility` = handwashing_ob)
+
+  return(df)
+}
+```
+
+# handwashing_ob_week 
+```{r fun-handwashing_ob_week}
+handwashing_ob_week <- function(df, threshold = params$threshold_hw_ob) {
+  df <- df |>
+    filter(week == max(week, na.rm = TRUE)) |>  # Keep only last week's data
+    filter(complete_interview == 1) |> # Check only complete interviews
+    filter(n_interviews_week_complete > 3) |>  # Ensure only enumerators with at least 3 complete interview
+    mutate(handwashing_ob = case_when(
+      HW2_OB %in% c(4, 5) | is.na(HW2_OB) ~ 0,  # No observed handwashing facility
+      TRUE ~ 1  # Facility observed
+    )) |>
+    group_by(Intro_01, Intro_01a, n_interviews_enum, week, n_interviews_week, n_interviews_week_complete) |>
+    summarise(
+      count = sum(handwashing_ob, na.rm = TRUE),  # Count of observed handwashing facilities
+      rate = mean(handwashing_ob, na.rm = TRUE) * 100  # Convert to percentage
+    ) |>
+    ungroup() |>
+    filter(rate < threshold,  n_interviews_week_complete > 3) |>  # Apply threshold & interview count filter
+    mutate(rate = percent(rate, accuracy = 0.1),        # Format percentage
+           var = "Observed handwashing facility") |>  
+    rename(
+      Enumerator = Intro_01,
+      Team = Intro_01a,
+      `# of interviews by enumerator` = n_interviews_enum,
+      `# of interviews by enumerator per week` = n_interviews_week,
+      `# of complete interviews by enumerator per week` = n_interviews_week_complete,
+      `Rate` = rate
+    ) |> 
+    ungroup()|> 
+  mutate(
+    Enumerator = haven::as_factor(Enumerator),  ### PRESERVE LABELS
+    Team = haven::as_factor(Team)               ### PRESERVE LABELS
+  )
+
+  return(df)
+}
+```
+
+# handwashing_ob_ts
+```{r fun-handwashing_ob_ts}
+handwashing_ob_ts <- function(df, threshold = params$threshold_hw_ob) {
+  df <- df |>
+    handwashing_ob()  |>
+    mutate(`_uuid` = "", Variable = "HW2_OB", start_date = NA_Date_, start_time = NA_Date_, end_date = NA_Date_, end_time = NA_Date_, Intro_06 = "", Issue = "Enumerator rarely observes handwashing facility", `New value` = "", `Interview outcome` = "", NUTS1 = "", NUTS2 = "", NUTS3 = "", Stratum = "", Action = "", `Original value` = `Observed handwashing facility`, `New value` = "", Action = "", `HoH name` = "",  `HoH age` = "") %>%
+    select(`_uuid`, Enumerator, Team, `# of interviews by enumerator`, `Interview outcome`, NUTS1, NUTS2, NUTS3, `HoH name`, `HoH age`, Stratum, Variable, Issue, `Original value`, `New value`, Action, start_date, start_time, end_date, end_time) 
+  return(df)
+}
+```
+
+
+# convert_columns_to_factor
+```{r fun-convert_columns_to_factor}
+convert_columns_to_factor <- function(df, cols) {
+  for (col in cols) {
+    if (col %in% colnames(df)) {
+      df[[col]] <- as.factor(df[[col]])
+    }
+  }
+  return(df)
+}
+```
+
+# combine_units_hhmain
+```{r fun-combine_units_hhmain}
+combine_units_main <- function(df, verbose = TRUE) {
+  # Initialize vectors to track transformations
+  applied_transforms <- c()
+  skipped_transforms <- c()
+  
+  # List of all the transformations to apply
+  transformations <- list(
+    list(
+      output = "BD20_min",
+      inputs = c("BD20_3", "BD20_4"),
+      transform = function(df) {
+        mutate(df, BD20_min = case_when(
+          is.na(BD20_4) ~ as.numeric(as.character(BD20_3)),
+          is.na(BD20_3) ~ as.numeric(as.character(BD20_4)) * 60,
+          !is.na(BD20_3) & !is.na(BD20_4) ~ as.numeric(as.character(BD20_3)) + 
+            as.numeric(as.character(BD20_4)) * 60,
+          BD20_2 == "1" ~ as.numeric(as.character(BD20_3)), 
+          BD20_2 == "2" ~ as.numeric(as.character(BD20_4))*60 + as.numeric(as.character(BD20_5))
+        ))
+      }
+    ),
+    list(
+      output = "HC11_min",
+      inputs = c("HC11a", "HC11b", "HC11c"),
+      transform = function(df) {
+        mutate(df, HC11_min = case_when(
+          is.na(HC11b) & is.na(HC11c) ~ as.numeric(as.character(HC11a)),
+          is.na(HC11a) & is.na(HC11b) ~ as.numeric(as.character(HC11c)),
+          !is.na(HC11b) & !is.na(HC11c) ~ as.numeric(as.character(HC11c)) + 
+            as.numeric(as.character(HC11b)) * 60
+        ))
+      }
+    ),
+    list(
+      output = "H15d_min",
+      inputs = c("H15d_1", "H15d_2", "H15d_3"),
+      transform = function(df) {
+        mutate(df, H15d_min = case_when(
+          is.na(H15d_2) & is.na(H15d_3) ~ as.numeric(as.character(H15d_1)),
+          is.na(H15d_1) & is.na(H15d_2) ~ as.numeric(as.character(H15d_3)),
+          !is.na(H15d_2) & !is.na(H15d_3) ~ as.numeric(as.character(H15d_3)) + 
+            as.numeric(as.character(H15d_2)) * 60
+        ))
+      }
+    ),
+    list(
+      output = "H21_min",
+      inputs = c("H21_1", "H21_2", "H21_3"),
+      transform = function(df) {
+        mutate(df, H21_min = case_when(
+          is.na(H21_2) & is.na(H21_3) ~ as.numeric(as.character(H21_1)),
+          is.na(H21_1) & is.na(H21_2) ~ as.numeric(as.character(H21_3)),
+          !is.na(H21_2) & !is.na(H21_3) ~ as.numeric(as.character(H21_3)) + 
+            as.numeric(as.character(H21_2)) * 60
+        ))
+      }
+    ),
+    list(
+      output = "SubPov02_month",
+      inputs = c("SubPov02", "SubPov02_2"),
+      transform = function(df) {
+        mutate(df, SubPov02_month = case_when(
+          as.numeric(as.character(SubPov02_2)) == 1 ~ SubPov02 * (365 / 12 / 7),
+          as.numeric(as.character(SubPov02_2)) == 2 ~ SubPov02,
+          as.numeric(as.character(SubPov02_2)) == 3 ~ SubPov02 / 12
+        ))
+      }
+    )
+  )
+  
+  # Apply each transformation only if all required input columns exist
+  for (t in transformations) {
+    if (all(t$inputs %in% names(df))) {
+      df <- t$transform(df)
+      applied_transforms <- c(applied_transforms, t$output)
+    } else {
+      skipped_transforms <- c(skipped_transforms, t$output)
+    }
+  }
+  
+  # Print message about transformations if verbose mode is on
+  if (verbose) {
+    if (length(applied_transforms) > 0) {
+      message("Applied transformations: ", paste(applied_transforms, collapse = ", "))
+    } else {
+      message("No transformations were applied.")
+    }
+    
+    if (length(skipped_transforms) > 0) {
+      message("Skipped transformations: ", paste(skipped_transforms, collapse = ", "), 
+              " (missing input variables)")
+    }
+  }
+  
+  return(df)
+}
+```
+
+# combine_units_plot
+```{r fun-combine_units_plot}
+combine_units_plot <- function(df) {
+  df <- df |>
+    mutate(
+      Land19a_metres = case_when(
+        as.numeric(as.character(Land19a)) %in% c(96, 98, 998, 99) ~ NA_real_,
+        as.numeric(as.character(Land19b)) == 1 ~ as.numeric(as.character(Land19a)) * 4200,
+        as.numeric(as.character(Land19b)) == 2 ~ as.numeric(as.character(Land19a)) * 10000
+      )
+    )
+}
+```
+
+# refusal_rate_total
+```{r fun-refusal_rate_total}
+refusal_rate_total <- function(df) {
+  ref_r <- calculate_rate(df,
+    var = refusal_interview,
+    eligible_var = eligible_unit_refrate
+  ) |>
+    pull() %>%
+    percent(., accuracy = 0.1) 
+
+  return(ref_r)
+}
+```
+
+# refusal_rate_enum
+```{r fun-refusal_rate_enum}
+refusal_rate_enum <- function(dat, threshold = params$threshold_refr) {
+  ref_r <- dat |>
+    filter(n_interviews_enum > 3) |>
+    group_by(Intro_01, Intro_01a, n_interviews_enum) |>
+    summarize(rate = sum(refusal_interview, na.rm = TRUE) / sum(eligible_unit_refrate, na.rm = TRUE)) |>
+    ungroup() |>
+    filter(rate > threshold) |>
+    mutate(rate = percent(rate, accuracy = 0.1)) |>
+    rename(Enumerator = Intro_01, Team = Intro_01a, `# of interviews by enumerator` = n_interviews_enum, `Refusal rate` = rate, `# of interviews by enumerator` = n_interviews_enum) |>   
+    ungroup()
+
+  return(ref_r)
+}
+```
+
+# refusal_rate_enum_ts
+```{r fun-refusal_rate_enum_ts}
+refusal_rate_enum_ts <- function(dat, threshold = params$threshold_refr) {
+  ref_r_ts <- dat  |>   
+    ungroup() |>
+    refusal_rate_enum() |>
+    rename(`Original value` = `Refusal rate`) |>
+    mutate(`_uuid` = "", Variable = "", start_date = NA_Date_, start_time = NA_Date_, end_date = NA_Date_, end_time = NA_Date_, Issue = "Refusal rate is particularly high", `New value` = "", Action = "", `New value` = "", Action = "", `Interview outcome` = "", NUTS1 = "", NUTS2 = "", NUTS3 = "", `HoH name` = "", `HoH age` = "", Stratum = "") 
+  return(ref_r_ts)
+}
+```
+
+# refusal_rate_enum_week
+```{r fun-refusal_rate_enum_week}
+refusal_rate_enum_week <- function(dat, threshold = params$threshold_refr) {
+  ref_r_week <- dat |>
+    filter( n_interviews_week > 3) |>
+    filter(week == max(week, na.rm = TRUE)) |> 
+    group_by(Intro_01, Intro_01a, n_interviews_enum, week, n_interviews_week, n_interviews_week_complete) |>
+    summarize(rate = sum(refusal_interview, na.rm = TRUE) / sum(eligible_unit_refrate, na.rm = TRUE)) |>
+    ungroup() |>
+    filter(rate > threshold) |>
+    mutate(rate = percent(rate, accuracy = 0.1),
+           var = "Refusal rate" ) |>
+    rename(Enumerator = Intro_01, Team = Intro_01a, `# of interviews by enumerator` = n_interviews_enum, `Rate` = rate, `# of interviews by enumerator per week` = n_interviews_week, `# of complete interviews by enumerator per week` = n_interviews_week_complete) |>   
+    ungroup() |> 
+  mutate(
+    Enumerator = haven::as_factor(Enumerator),  ### PRESERVE LABELS
+    Team = haven::as_factor(Team)               ### PRESERVE LABELS
+  )
+
+  return(ref_r_week)
+}
+```
+
+# check_sd
+```{r fun-check_sd}
+# Identify enumerators with outliers in numeric variables based on a defined number of standard deviations from the mean
+check_sd <- function(df, var, n_sd = params$sd) {
+  enum_table <- df |>
+    filter(!{{ var }} %in% c(98, 99, 998)) |>
+    mutate(
+      global_mean = round(mean({{ var }}, na.rm = TRUE), 2),
+      global_sd = round(sd({{ var }}, na.rm = TRUE), 2),
+      upper_thresh = round(global_mean + n_sd * global_sd, 2),
+      lower_thresh = max(round(global_mean - n_sd * global_sd, 2), 0, na.rm = TRUE)
+    ) |>
+    group_by(Intro_01, Intro_01a) |>
+    mutate(mean_var_enum = round(mean({{ var }}, na.rm = TRUE), 2)) |>
+    ungroup() |>
+    filter({{ var }} >= upper_thresh |
+      {{ var }} <= lower_thresh) |>
+    select(Enumerator = Intro_01, Team = Intro_01a, `# of interviews by enumerator` = n_interviews_enum, `Mean, {{ var }}, enumerator` = mean_var_enum, `Global mean` = global_mean, `Global SD` = global_sd, `Upper threshold` = upper_thresh, `Lower threshold` = lower_thresh) |>
+    distinct() 
+
+  return(enum_table)
+}
+```
+
+# check_sd_week
+```{r fun-check_sd_week}
+check_sd_week <- function(df, var, n_sd = params$sd) {
+  # Compute global statistics first
+  global_mean <- round(mean(df[[deparse(substitute(var))]], na.rm = TRUE), 2)
+  global_sd <- round(sd(df[[deparse(substitute(var))]], na.rm = TRUE), 2)
+  upper_thresh <- round(global_mean + n_sd * global_sd, 2)
+  lower_thresh <- max(round(global_mean - n_sd * global_sd, 2), 0, na.rm = TRUE)
+
+  # Compute enumerator-level means
+  enum_table_week <- df |>
+    filter(!{{ var }} %in% c(98, 99, 998)) |>  # Exclude invalid values
+    group_by(Intro_01, Intro_01a, week, n_interviews_week, n_interviews_enum, n_interviews_week_complete) |>
+    summarise(
+      mean_var_enum = round(mean({{ var }}, na.rm = TRUE), 2),
+      .groups = "drop"
+    ) |>
+    mutate(
+      `Global mean` = global_mean,
+      `Global SD` = global_sd,
+      `Upper threshold` = upper_thresh,
+      `Lower threshold` = lower_thresh
+    ) |>
+    filter(mean_var_enum < lower_thresh | mean_var_enum > upper_thresh) |>  # Filter out only outlier enumerators
+    select(Enumerator = Intro_01, Team = Intro_01a, `# of interviews by enumerator per week` = n_interviews_week, `# of complete interviews by enumerator per week` = n_interviews_week_complete,
+           `Mean, {{ var }}, enumerator` = mean_var_enum, `Global mean`, `Global SD`, `Upper threshold`, `Lower threshold`, week, `# of interviews by enumerator` = n_interviews_enum)
+
+  return(enum_table_week)
+}
+
+```
+
+# check_sd_ts
+```{r fun-check_sd_ts}
+# Identify enumerators with outliers in numeric variables based on a defined number of standard deviations from the mean
+check_sd_ts <- function(df, var, n_sd = params$sd) {
+  check_sd_ts <- df |>
+    check_sd() |>
+    mutate(Variable = "", Issue = "Duration (minutes)", `Interview outcome` = "", NUTS1 = "", NUTS2 = "", NUTS3 = "", `New value` = "", Action = "", `HoH name` = "",  `HoH age` = "", val = as.character(`Duration (minutes)`, start_date = NA_Date_, start_time = NA_Date_, end_date = NA_Date_, end_time = NA_Date_)) %>%
+    select(`_uuid`, Enumerator, Team, start_date, start_time, end_dat, end_time, `HoH name`, `HoH age`, Variable, Issue, `Original value` = val, `New value`, Action, `Interview outcome`, NUTS1, NUTS2, NUTS3)
+    return(check_sd_ts)
+}
+```
+
+# n_interviews
+```{r fun-n_interviews}
+n_interviews <- function(df, group_var) {
+  df <- df |>
+    group_by({{ group_var }}) |>
+    mutate(n_interviews_enum = n_distinct(Intro_06)) |>
+    ungroup()
+}
+```
+```{r fun-n_interviews_complete}
+n_interviews_complete <- function(df) {
+  complete_counts <- df |>
+    filter(complete_interview == 1) |>
+    group_by(Intro_01, Intro_01a) |>
+    summarise(n_interviews_enum_complete = n_distinct(Intro_06), .groups = "drop")
+
+  df <- df |>
+    left_join(complete_counts, by = c("Intro_01", "Intro_01a"))
+
+  return(df)
+}
+```
+
+# n_interviews_week
+```{r fun-n_interviews_per_week}
+n_interviews_per_week <- function(df) {
+  df <- df |>
+    group_by(Intro_01, Intro_01a, week) |>  
+    mutate(n_interviews_week = n_distinct(Intro_06))|>
+  ungroup()
+}
+
+```
+#Complete interview per week 
+```{r fun-n_interviews_per_week_complete}
+n_interviews_per_week_complete <- function(df) {
+  complete_counts <- df |>
+    filter(complete_interview == 1) |>
+    group_by(Intro_01, Intro_01a, week) |>
+    summarise(n_interviews_week_complete = n_distinct(Intro_06), .groups = "drop")
+
+  df <- df |>
+    left_join(complete_counts, by = c("Intro_01", "Intro_01a", "week"))
+
+  return(df)
+}
+
+```
+
+# check_sd_rowwise
+```{r fun-check_sd_rowwise}
+check_sd_rowwise <- function(df, var, n_sd = params$sd) {
+  var_sym <- sym(var)
+  
+  df <- df |>
+    filter(complete_interview == 1) |> 
+    mutate(
+      !!var_sym := as.numeric(as.character(!!var_sym))) |>
+    filter(! (!!var_sym) %in% c(98, 99, 998)) |>
+    mutate(
+      global_mean = round(mean(!!var_sym, na.rm = TRUE), 2),
+      global_sd = round(sd(!!var_sym, na.rm = TRUE), 2)) |>
+    mutate(
+      upper_thresh = round(global_mean + 3 * global_sd, 2),
+      lower_thresh = max(round(global_mean - 3 * global_sd, 2), 0, na.rm = TRUE)
+    ) |>
+    filter(!!var_sym > upper_thresh |
+             !!var_sym < lower_thresh) |>
+    pivot_longer(cols = !!var_sym, names_to = "Variable", values_to = "Value") |>
+    select(
+      `_uuid`,
+      Enumerator = Intro_01,
+      Team = Intro_01a,
+      `# of interviews by enumerator` = n_interviews_enum_complete,
+      Variable,
+      Value,
+      start_date,
+      start_time,
+      end_date,
+      end_time,
+      `Interview outcome` = Final_01,
+      NUTS1 = Intro_03a_NUTS1,
+      NUTS2 = Intro_03b_NUTS2,
+      NUTS3 = Intro_03c_NUTS3,
+      Stratum = stratum,
+      `HoH name` = HeadName,
+      `HoH age` = HeadAge,
+      `Global mean` = global_mean,
+      `Global SD` = global_sd,
+      `Upper threshold` = upper_thresh,
+      `Lower threshold` = lower_thresh
+    ) |>
+    distinct()
+
+  return(df)
+}
+```
+
+# check_sd_rowwise_map
+```{r fun-check_sd_rowwise_map}
+check_sd_rowwise_map <- function(df, vars) {
+df_m <- map_dfr(vars, ~ check_sd_rowwise(df, .x))
+
+# Return the combined dataframe
+return(df_m)
+}
+```
+
+# check_sd_rowwise_map_ts
+```{r fun-check_sd_rowwise_map_ts}
+check_sd_rowwise_map_ts <- function(df, vars) {
+  df <- df |>
+    check_sd_rowwise_map(vars) |>
+    mutate(`New value` = "", 
+           Issue = case_when(Value > `Upper threshold` ~ "Value seems high, please check",
+                             Value < `Lower threshold` ~ "Value seems lower, please check"),
+           Action = "",
+           Value = as.character(Value)) |>
+    select(`_uuid`, Enumerator, Team, `# of interviews by enumerator`, start_date, start_time, end_date, end_time, `Interview outcome`, NUTS1, NUTS2, NUTS3, `HoH name`, `HoH age`, Stratum, Variable, Issue, `Original value` = Value, `New value`, Action)
+    return(df)
+}
+```
+
+# check_dupl
+```{r fun-check_dupl}
+check_dupl <- function(df, var) {
+  df |>
+    group_by(Intro_06, start_date, start_time, end_date, end_time, {{ var }}) |>
+    mutate(count = n()) |>
+    filter(count > 1) |>
+    select(Intro_01, Intro_01a, Intro_06, start_date, start_time, end_date, end_time, `_uuid`, count, {{ var }}) |>
+    ungroup() |>
+    to_factor()
+}
+```
+
+# check_skip
+```{r fun-check_skip}
+# Check the share of skips in key variables of certain modules
+
+check_skip <- function(df, ..., ind = "share_not_skipped", threshold = params$threshold_skips) {
+  param_columns <- enquos(...)
+
+  df <- df %>%
+    mutate_at(vars(!!!param_columns), ~ case_when(
+      . == "2" ~ 0,
+      . == "1" ~ 1,
+      is.na(.) ~ NA_real_
+    )) |>
+    mutate(sum_not_skipped = Reduce(`+`, across(...))) |>
+    mutate(not_skipped = case_when(
+      sum_not_skipped > 0 & !is.na(sum_not_skipped) ~ 0,
+      sum_not_skipped == 0 | is.na(sum_not_skipped) ~ 1
+    )) |>
+    group_by(Intro_01, Intro_01a) |>
+    summarise(
+      `# of interviews by enumerator` = n(),
+      var = round(mean(not_skipped), 2)
+    ) |>
+    ungroup() |>
+    rename(
+      !!ind := var) 
+
+  return(df)
+}
+```
+
+# check_skip_all
+```{r fun-check_skip_all}
+check_skip_all <- function(df) {
+  check_skip(df, c(EMP01, EMP02, EMP03), ind = "Employment module") |>
+    full_join(check_skip(df, c(H01_1), ind = "Health care module")) |>
+    full_join(check_skip(df, c(Land01, Land03, Land04), ind = "Land module")) |>
+    full_join(check_skip(df, c(ExpShock01), ind = "Shocks module")) |>
+    full_join(check_skip(df, c(ScProtec01), ind = "Social protection module")) |>
+    full_join(check_skip(df, c(Remit01), ind = "Remittances module")) |>
+    full_join(check_skip(df, c(Justice01), ind = "Access to justice module")) |>
+    filter(`# of interviews by enumerator` > 5) |>
+    rename(Enumerator = Intro_01, Team = Intro_01a) |>
+    pivot_longer(
+      cols = -c(Enumerator, Team, `# of interviews by enumerator`),
+      names_to = "Variable",
+      values_to = "Share not skipped (%)"
+    )  |> 
+    filter(`Share not skipped (%)` < .2) |>
+    arrange(`Share not skipped (%)`) |>
+    mutate(`Share not skipped (%)` = percent(`Share not skipped (%)`))
+}
+```
+
+# check_skip_week
+```{r fun-check_skip_week}
+check_skip_week <- function(df, ..., ind = "var", threshold = params$threshold_skips_week) {
+  param_columns <- enquos(...)
+
+  df <- df |> 
+    filter(week == max(week, na.rm = TRUE)) |>  # Keep only last week's data
+    filter(complete_interview == 1) |>          # Check only complete interviews
+    filter(n_interviews_week_complete > 3) |>   # Ensure only enumerators with at least 3 complete interviews
+    distinct(Intro_06, .keep_all = TRUE) |>      
+    mutate(across(!!!param_columns, ~ case_when(
+      . == "2" ~ 0,   # Skipped
+      . == "1" ~ 1,   # Answered
+      is.na(.) ~ NA_real_,
+      TRUE ~ NA_real_   # Catch unexpected values
+    ))) |> 
+    rowwise() |>                                
+    mutate(
+      sum_not_skipped = sum(c_across(!!!param_columns), na.rm = TRUE),
+      skipped = case_when(
+        is.na(sum_not_skipped) ~ 1,             # All NA → treat as skipped
+        sum_not_skipped == 0 ~ 1,               # All skipped
+        TRUE ~ 0                                # At least one answered
+      )
+    ) |> 
+    ungroup() |> 
+    group_by(Intro_01, Intro_01a, week, n_interviews_week, n_interviews_week_complete, n_interviews_enum) |>  
+    summarise(
+      Rate = round(mean(skipped, na.rm = TRUE), 2),
+      Interviews = n(),                         
+      .groups = "drop"
+    ) |> 
+    filter(Rate > threshold) |>                 # Flag enumerators above threshold
+    mutate(var = ind) |>                        # Label module
+    rename(
+      Enumerator = Intro_01, 
+      Team = Intro_01a,
+      `# of interviews by enumerator per week` = n_interviews_week,
+      `# of interviews by enumerator` = n_interviews_enum,
+      `# of complete interviews by enumerator per week` = n_interviews_week_complete
+    )|> 
+ mutate(
+  Enumerator = haven::as_factor(Enumerator),
+  Team = haven::as_factor(Team)
+)
+
+  return(df)
+}
+
+# check_skip_week <- function(df, ..., ind = "var", threshold = params$threshold_skips_week) {
+#   param_columns <- enquos(...)
+# 
+#   df <- df |> 
+#     filter(week == max(week, na.rm = TRUE)) |>  # Keep only last week's data
+#     filter(complete_interview == 1) |> # Check only complete interviews
+#     filter(n_interviews_week_complete > 3) |>  # Ensure only enumerators with at least 3 complete interview
+#     mutate_at(vars(!!!param_columns), ~ case_when(
+#       . == "2" ~ 0,   # Skipped (coded as 0)
+#       . == "1" ~ 1,   # Answered (coded as 1)
+#       is.na(.) ~ NA_real_
+#     )) |> 
+#     mutate(sum_not_skipped = Reduce(`+`, across(!!!param_columns))) |> 
+#     mutate(skipped = case_when(
+#       sum_not_skipped > 0 & !is.na(sum_not_skipped) ~ 0,   # At least one question answered
+#       sum_not_skipped == 0 | is.na(sum_not_skipped) ~ 1    # All questions skipped
+#     )) |> 
+#     group_by(Intro_01, Intro_01a, week, n_interviews_week, n_interviews_week_complete, n_interviews_enum) |>  
+#     summarise(
+#       Rate = round(mean(skipped), 2)  # Compute share skipped
+#     ) |> 
+#     ungroup() |> 
+#     filter(Rate > threshold) |>  # Flag enumerators who skip more than 20%
+#     mutate(var = ind) |>  # Store module name
+#     rename(
+#       Enumerator = Intro_01, 
+#       Team = Intro_01a,
+#       `# of interviews by enumerator per week` = n_interviews_week,
+#       `# of interviews by enumerator` = n_interviews_enum,
+#       `# of complete interviews by enumerator per week` = n_interviews_week_complete
+#     ) 
+# 
+#   return(df)
+# }
+
+
+```
+
+# check_skip_all_week
+```{r fun-check_skip_all_week}
+check_skip_all_week <- function(df) {
+  check_skip_week(df, c(EMP01, EMP02, EMP03), ind = "Employment module") |>
+    full_join(check_skip_week(df, c(H01_1), ind = "Health care module")) |>
+    full_join(check_skip_week(df, c(Land01, Land03, Land04), ind = "Land module")) |>
+    full_join(check_skip_week(df, c(ExpShock01), ind = "Shocks module")) |>
+    full_join(check_skip_week(df, c(ScProtec01), ind = "Social protection module")) |>
+    full_join(check_skip_week(df, c(Remit01), ind = "Remittances module")) |>
+    full_join(check_skip_week(df, c(Justice01), ind = "Access to justice module")) |>
+    pivot_longer(
+      cols = -c(Enumerator, Team, `# of interviews by enumerator`, `# of interviews by enumerator per week`, `# of complete interviews by enumerator per week`, week, var, Interviews),
+      names_to = "Variable",
+      values_to = "Rate"
+    ) |> 
+    arrange(desc(Rate)) |>  # Sort by highest skipped percentage
+    mutate(Rate = percent(Rate, accuracy = 0.1))  # Format as percentage
+}
+
+```
+
+# check_skip_all_ts
+```{r fun-check_skip_all_ts}
+check_skip_all_ts <- function(df, var) {
+  df |>
+    check_skip_all() |>
+        mutate(`_uuid` = "", start_date = NA_Date_, start_time = NA_Date_, end_date = NA_Date_, end_time = NA_Date_, Issue = "Enumerator frequently selects NO for first questions of module, skipping module (value shows % of interviews where module was completed)", Action = "", `Original value` = `Share not skipped (%)`, `New value` = "", `Interview outcome` = "", NUTS1 = "", NUTS2 = "", NUTS3 = "", Stratum = "", `HoH name` = "",  `HoH age` = "") |>
+    select(Enumerator = Intro_01, Team = Intro_01a, start_date, start_time, end_date, end_time, `_uuid`, `Original value`, Variable, Issue, `New value`, Action, NUTS1, NUTS2, NUTS3, Stratum, `HoH name`, `HoH age`, `Interview outcome`, `# of interviews by enumerator`)
+}
+```
+
+# check_missing
+```{r fun-check_missing}
+check_missing <- function(df, var) {
+  df |>
+    filter(complete_interview == 1,
+           is.na({{ var }})) |>
+    select(Intro_01, Intro_01a, Intro_06, start_date, start_time, end_date, end_time, `_uuid`, {{ var }}, Final_01) |>
+    pivot_longer(cols = {{ var }}, names_to = "Variable with missing value") |>
+    select(-value)
+}
+```
+
+
+
+# combine_missing
+```{r fun-combine_missing}
+# Uses check_missing and binds the resulting dataframes specified with a vector of columns
+combine_missing <- function(df, columns) {
+  combined_df <- data.frame()
+  combined_df <- map_dfr(columns, ~ check_missing(df, !!sym(.x)))
+  return(combined_df)
+}
+```
+
+# check_version
+```{r fun-check_version}
+#Check that enumerators have not used an outdated form version in the previous 7 days - Petra: It was 5 before, I changed it to 7 to align with the week check. 
+check_version <- function(df, version_var) {
+  df |>
+    mutate(version_num = as.numeric({{version_var}})) |>
+    group_by(source, start_date) |>
+    mutate(current_version_num = max(version_num)) |>
+    group_by(source, current_version_num) |>
+    mutate(start_date_version = min(start_date, na.rm = TRUE)) |>
+    ungroup() |>
+    filter(version_num != current_version_num) |>
+    mutate(
+      days_since_new_form = as.Date(start_date) - as.Date(start_date_version)
+    ) |>
+    filter(start_date >= Sys.Date() - 7,
+           current_version_num == max(current_version_num),
+           days_since_new_form > 0)  |>
+    select(`_uuid`, Intro_01, Enumerator = Intro_01, Team = Intro_01a, 
+           `# of interviews by enumerator` = n_interviews_enum, 
+           start_date, start_time, end_date, end_time,
+           `Interview outcome` = Final_01, 
+           NUTS1 = Intro_03a_NUTS1, NUTS2 = Intro_03b_NUTS2, NUTS3 = Intro_03c_NUTS3,
+           Stratum = stratum, `HoH name` = HeadName, `HoH age` = HeadAge, 
+           `Version used` = version_num, `Date version update` = start_date_version, 
+           `Current version` = current_version_num, `Days since version update` = days_since_new_form 
+    ) 
+}
+```
+
+# check_version_week
+```{r fun-check_version_week}
+#Check that enumerators have not used an outdated form version in the previous 7 days
+check_version_week <- function(df, version_var) {
+  df |>
+    mutate(version_num = as.numeric(substr(Version, 2, 3))) |>
+    mutate(version_num = as.numeric(substr({{version_var}}, 2, 3))) |>
+    group_by(source, start_date) |>
+    mutate(current_version_num = max(version_num)) |>
+    group_by(current_version_num) |>
+    mutate(start_date_version = min(start_date, na.rm = TRUE)) |>
+    ungroup() |>
+    filter(version_num != current_version_num) |>
+    mutate(
+      days_since_new_form = as.Date(start_date) - as.Date(start_date_version)
+    ) |>
+    filter(start_date >= Sys.Date() - 7,
+           current_version_num == max(current_version_num),
+           days_since_new_form > 0)  |>
+    select(`_uuid`, Enumerator = Intro_01, Team = Intro_01a, 
+           `# of interviews by enumerator` = n_interviews_enum,`# of interviews by enumerator per week` = n_interviews_week,
+           `Form version used` = version_num, `Current form version` = current_version_num,  
+    ) 
+}
+```
+
+# check_outlier_dem
+```{r fun-check_outlier_dem}
+check_outlier_dem <- function(df_hhroster, df_hhmain) {
+  hhroster_hh <- df_hhroster |>
+    group_by(Intro_01, Intro_01a, n_interviews_enum, Intro_06) |>
+    mutate(child = case_when(
+      HH_04 < 18 ~ 1,
+      TRUE ~ 0),
+      adult = case_when(HH_04 >= 18 ~ 1, TRUE ~ 0)
+    ) |>
+    summarise(nChildrenHH = sum(child, na.rm = TRUE),
+             nAdultsHH = sum(adult, na.rm = TRUE)) |>
+    ungroup()
+
+  outlier_dem <-
+    rbind(
+      check_sd(df_hhmain, HHsize) |>
+        mutate(var = "Household size"),
+      check_sd(hhroster_hh, nAdultsHH) |>
+        mutate(var = "Number of adults in household"),
+      check_sd(hhroster_hh, nChildrenHH) |>
+        mutate(var = "Number of children in household"),
+      check_sd(
+        df_hhroster |> filter(HHposinfo == 1),
+        HH_04
+      ) |>
+        mutate(var = "Age of household head"),
+      check_sd(
+        df_hhroster |>
+          mutate(HH_02_bin = case_when(
+            HH_02 == "2" ~ 1,
+            HH_02 == "1" ~ 0
+          )) |>
+          filter(HHposinfo == 1),
+        HH_02_bin
+      ) |>
+        mutate(var = "Sex of household head"),
+      check_sd(df_hhmain, age_selected) |>
+        mutate(var = "Age of randomly selected adult"),
+      check_sd(
+        df_hhmain |>
+          mutate(HH_02_select_bin = case_when(
+            HH_02_selected == 2 ~ 1,
+            HH_02_selected == 1 ~ 0
+          )),
+        HH_02_select_bin
+      ) |>
+        mutate(var = "Sex of randomly selected adult"),
+      check_sd(df_hhmain, agerandomwoman) |>
+        mutate(var = "Age of randomly selected woman"),
+      check_sd(df_hhmain, finalcaregiverAGE) |>
+        mutate(var = "Age of caregiver"),
+      check_sd(
+        df_hhmain |>
+          mutate(
+            finalcaregiverSEX_bin = case_when(
+              finalcaregiverSEX == 2 ~ 1,
+              finalcaregiverSEX == 1 ~ 0
+            )
+          ),
+        finalcaregiverSEX_bin
+      ) |>
+        mutate(var = "Sex of caregiver")) |>
+    filter(`Mean, {{ var }}, enumerator` < `Lower threshold` |  `Mean, {{ var }}, enumerator` > `Upper threshold`)
+    # ) |>
+    # select(
+    #   Intro_01,
+    #   Intro_01a,
+    #   `# of complete interviews by enumerator`,
+    #   `Mean, enumerator`,
+    #   `Global mean`,
+    #   `Global SD`,
+    #   `Upper threshold`,
+    #   `Lower threshold`
+    # )
+
+  return(outlier_dem)
+}
+```
+
+# check_outlier_dem_week
+```{r fun-check_outlier_dem_week}
+check_outlier_dem_week <- function(df_hhroster, df_hhmain) {
+  # Filter df_hhmain for the last week with at least 3 interviews
+  df_hhmain_week <- df_hhmain |> 
+    filter(week == max(week, na.rm = TRUE)) |> 
+    filter(complete_interview == 1) |> 
+    filter(n_interviews_week_complete > 3)   
+
+  # Filter df_hhroster for the last week with at least 3 interviews
+  df_hhroster_week <- df_hhroster |> 
+    filter(week == max(week, na.rm = TRUE)) |>  
+    filter(complete_interview == 1) |> 
+    filter(n_interviews_week_complete > 3)   
+
+  # Aggregate household composition
+  hhroster_hh_week <- df_hhroster_week |>
+    group_by(Intro_01, Intro_01a, n_interviews_enum, Intro_06, week, n_interviews_week, n_interviews_week_complete) |>
+    mutate(child = case_when(HH_04 < 18 ~ 1, TRUE ~ 0),
+           adult = case_when(HH_04 >= 18 ~ 1, TRUE ~ 0)) |>
+    summarise(nChildrenHH = sum(child, na.rm = TRUE),
+              nAdultsHH = sum(adult, na.rm = TRUE)) |>
+    ungroup()
+
+  # Compute outlier statistics
+  outlier_dem_week <- rbind(
+    check_sd_week(df_hhmain_week, HHsize) |> mutate(var = "Household size"),
+    check_sd_week(hhroster_hh_week, nAdultsHH) |> mutate(var = "Number of adults in household"),
+    check_sd_week(hhroster_hh_week, nChildrenHH) |> mutate(var = "Number of children in household"),
+    check_sd_week(df_hhroster_week |> filter(HHposinfo == 1), HH_04) |> mutate(var = "Age of household head"),
+    check_sd_week(df_hhroster_week |>
+               mutate(HH_02_bin = case_when(HH_02 == "2" ~ 1, HH_02 == "1" ~ 0)) |>
+               filter(HHposinfo == 1), HH_02_bin) |> mutate(var = "Sex of household head"),
+    check_sd_week(df_hhmain_week, age_selected) |> mutate(var = "Age of randomly selected adult"),
+    check_sd_week(df_hhmain_week |>
+               mutate(HH_02_select_bin = case_when(HH_02_selected == 2 ~ 1, HH_02_selected == 1 ~ 0)), 
+               HH_02_select_bin) |> 
+      mutate(var = "Sex of randomly selected adult"),
+    check_sd_week(df_hhmain_week, agerandomwoman) |> mutate(var = "Age of randomly selected woman"),
+    check_sd_week(df_hhmain_week, finalcaregiverAGE) |> mutate(var = "Age of caregiver"),
+    check_sd_week(df_hhmain_week |>
+               mutate(finalcaregiverSEX_bin = case_when(finalcaregiverSEX == 2 ~ 1, finalcaregiverSEX == 1 ~ 0)), 
+               finalcaregiverSEX_bin) |> 
+      mutate(var = "Sex of caregiver") |>
+  filter(`Mean, {{ var }}, enumerator` < `Lower threshold` |  `Mean, {{ var }}, enumerator` > `Upper threshold`))
+
+  return(outlier_dem_week)
+}
+
+```
+
+# count_val_qc
+```{r fun-count_val_qc}
+# Calculate the share of complete values
+# Improved drop-in replacement for count_val()
+count_val_qc <- function(df, val, percentile, response_label, abs_threshold = 0.05) {
+  df_qc <- df %>%
+    mutate(
+      total_questions = rowSums(!is.na(select(., where(is.character)))),
+      match_count = rowSums(select(., where(is.character)) |> lapply(\(x) x %in% val) |> as.data.frame(), na.rm = TRUE),
+      share = match_count / total_questions
+    )
+
+  enum_summary <- df_qc %>%
+    group_by(Intro_01, Intro_01a) %>%
+    summarise(
+      mean_share = mean(share, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  threshold <- quantile(enum_summary$mean_share, probs = percentile, na.rm = TRUE)
+
+  enum_summary %>%
+    filter(mean_share > abs_threshold & mean_share > threshold) %>%
+    pivot_longer(cols = mean_share) %>%
+    mutate(
+      var = response_label,
+      Enumerator = haven::as_factor(Intro_01),
+      Team = haven::as_factor(Intro_01a),
+      Mean_per_Interview = round(value, 2)
+    ) %>%
+    select(Team, Enumerator, Response = var, Mean_per_Interview)
+}
+
+
+```
+#Count_val
+```{r fun-count_val}
+# count_val <- function(df, val, percentile, response_label) {
+#   df %>%
+#     ungroup() %>%
+#     select(Intro_01, Intro_01a, where(is.character)) %>%
+#     mutate(count = rowSums(. == val, na.rm = TRUE)) %>%
+#     group_by(Intro_01, Intro_01a) %>%
+#     summarise(count = round(mean(count, na.rm = TRUE), 2)) %>%
+#     filter(count > quantile(count, probs = percentile)) %>%
+#     ungroup() |>
+#     pivot_longer(cols = count) |>
+#     mutate(var = response_label) |>
+#     select(-name) |>
+#     rename(Count = value, Response = var, , Enumerator = Intro_01, Team = Intro_01a)
+# }
+```
+
+# count_other
+```{r fun-count_other}
+# count_other <- function(df, percentile, response_label) {
+#   # Create vector of column names for "other, specify columns"
+#   specify_vars <- df |>
+#     select(contains("other"), contains("specify")) |>
+#     colnames()
+# 
+#   other_specify_outlier <- df %>%
+#     ungroup() %>%
+#     mutate(count = rowSums(!is.na(select(
+#       ., all_of(specify_vars)
+#     )))) %>%
+#     group_by(Intro_01, Intro_01a) %>%
+#     summarise(count = round(mean(count, na.rm = TRUE), 2)) %>%
+#     filter(count < quantile(count, probs = percentile)) %>%
+#     ungroup() |>
+#     pivot_longer(cols = count) |>
+#     mutate(var = response_label) |>
+#     select(-name) |>
+#     rename(Count = value, Response = var, Enumerator = Intro_01, Team = Intro_01a)
+# 
+#   return(other_specify_outlier)
+# }
+```
+```{r fun-count_other_qc}
+count_other_qc <- function(df, percentile, response_label) {
+  specify_vars <- df %>%
+    select(contains("other"), contains("specify")) %>%
+    colnames()
+
+  df_proc <- df %>%
+    ungroup() %>%
+    mutate(
+      total_questions = rowSums(!is.na(select(., where(is.character)))),
+      other_count = rowSums(!is.na(select(., all_of(specify_vars))))
+    ) %>%
+    group_by(Intro_01, Intro_01a) %>%
+    summarise(
+      mean_share = mean(other_count, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  threshold <- quantile(df_proc$mean_share, probs = percentile, na.rm = TRUE)
+
+  df_proc %>%
+    filter(mean_share < threshold) %>%
+    pivot_longer(cols = mean_share) %>%
+    mutate(
+      var = response_label,
+      Enumerator = haven::as_factor(Intro_01),
+      Team = haven::as_factor(Intro_01a),
+      Mean_per_Interview = round(value, 2)
+    ) %>%
+    select(Team, Enumerator, Response = var, Mean_per_Interview)
+}
+
+```
+
+# count_val_week
+
+```{r fun-count_val_week}
+# Calculate the share of complete values
+# count_val_week <- function(df, val, threshold_rate, response_label) {
+#   df %>%
+#     filter(n_interviews_enum > 3) |> 
+#     filter(week == max(week, na.rm = TRUE)) |>  
+#     ungroup() %>%
+#     mutate(count = rowSums(across(where(is.character), ~ . %in% val), na.rm = TRUE)) |>  
+#     group_by(Intro_01, Intro_01a, week, n_interviews_week, n_interviews_enum) %>%
+#     summarise(mean_count = round(mean(count, na.rm = TRUE), 2), .groups = "drop") %>%
+#     mutate(
+#       threshold = ceiling(length(select(df, where(is.character))) * threshold_rate)
+#     ) |>
+#     filter(mean_count > threshold) |>  # apply fixed rate threshold
+#     pivot_longer(cols = mean_count) %>%
+#     mutate(var = response_label) %>%
+#     select(-name) %>%
+#     rename(
+#       Count = value,
+#       Enumerator = Intro_01,
+#       Team = Intro_01a,
+#       `# of interviews by enumerator per week` = n_interviews_week,
+#       `# of interviews by enumerator` = n_interviews_enum
+#     )
+# }
+```
+```{r fun-count_val_week_qc}
+count_val_week_qc <- function(df, val, percentile, response_label, abs_threshold = 0.05) {
+  df_week <- df %>%
+   filter(week == max(week, na.rm = TRUE)) %>%  
+    filter(complete_interview == 1) %>% 
+    filter(n_interviews_week_complete > 3) %>%  
+    mutate(
+      total_questions = rowSums(!is.na(select(., where(is.character)))),
+      match_count = rowSums(
+        select(., where(is.character)) %>%
+          lapply(\(x) x %in% val) %>%
+          as.data.frame(),
+        na.rm = TRUE
+      ),
+      share = match_count / total_questions
+    )
+
+  summary <- df_week %>%
+    group_by(Intro_01, Intro_01a, week, n_interviews_week, n_interviews_enum, n_interviews_week_complete) %>%
+    summarise(
+      mean_share = mean(share, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  threshold_pct <- quantile(summary$mean_share, probs = percentile, na.rm = TRUE)
+
+  summary %>%
+    filter(mean_share > abs_threshold & mean_share > threshold_pct) %>%
+    mutate(
+      Enumerator = haven::as_factor(Intro_01),
+      Team = haven::as_factor(Intro_01a),
+      Mean_per_Interview = round(mean_share, 2),
+      var = response_label
+    ) %>%
+    select(
+      Team,
+      Enumerator,
+      var,
+      Mean_per_Interview,
+      week,
+      `# of interviews by enumerator per week` = n_interviews_week,
+      `# of interviews by enumerator` = n_interviews_enum,
+      `# of complete interviews by enumerator per week` = n_interviews_week_complete
+    )
+}
+
+
+```
+
+# count_other_week
+```{r fun-count_other_week_qc}
+count_other_week_qc <- function(df, percentile, response_label) {
+  specify_vars <- df %>%
+    select(contains("other"), contains("specify")) %>%
+    colnames()
+
+  df_week <- df %>%
+    filter(week == max(week, na.rm = TRUE))  %>%  
+    filter(complete_interview == 1)  %>% 
+    filter(n_interviews_week_complete > 3)  %>%  
+    mutate(
+      total_questions = rowSums(!is.na(select(., where(is.character)))),
+      other_count = rowSums(!is.na(select(., all_of(specify_vars))))
+    )
+
+  summary <- df_week %>%
+    group_by(Intro_01, Intro_01a, week, n_interviews_week, n_interviews_enum, n_interviews_week_complete) %>%
+    summarise(
+      mean_share = mean(other_count, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  threshold_pct <- quantile(summary$mean_share, probs = percentile, na.rm = TRUE)
+
+  summary %>%
+    filter(mean_share < threshold_pct) %>%
+    mutate(
+      Enumerator = haven::as_factor(Intro_01),
+      Team = haven::as_factor(Intro_01a),
+      Mean_per_Interview = round(mean_share, 2),
+      var = response_label
+    ) %>%
+    select(
+      Team,
+      Enumerator,
+      var,
+      Mean_per_Interview,
+      week,
+      `# of interviews by enumerator per week` = n_interviews_week,
+      `# of interviews by enumerator` = n_interviews_enum,
+      `# of complete interviews by enumerator per week` = n_interviews_week_complete
+    )
+}
+
+```
+
+```{r fun-count_other_week}
+# count_other_week <- function(df, percentile, response_label) {
+#   # Identify columns related to "Other, specify"
+#   specify_vars <- df |> 
+#     select(contains("other"), contains("specify")) |> 
+#     colnames()
+# 
+#   other_specify_outlier_week <- df %>%
+#     filter(n_interviews_enum > 3) |> 
+#     filter(week == max(week, na.rm = TRUE)) |>  
+#     ungroup() %>%
+#     mutate(count = rowSums(!is.na(select(., all_of(specify_vars))), na.rm = TRUE)) |>  # Count non-NA responses
+#     group_by(Intro_01, Intro_01a, week, n_interviews_week, n_interviews_enum) %>%
+#     summarise(mean_count = round(mean(count, na.rm = TRUE), 2), .groups = "drop") %>%
+#     mutate(threshold = quantile(mean_count, probs = percentile, na.rm = TRUE)) |>  # Compute threshold before filtering
+#     filter(mean_count < threshold) |>  # Use precomputed threshold
+#     pivot_longer(cols = mean_count) |>
+#     mutate(var = response_label) |>
+#     select(-name) |>
+#     rename(Count = value, Enumerator = Intro_01, Team = Intro_01a, 
+#            `# of interviews by enumerator per week` = n_interviews_week, 
+#            `# of interviews by enumerator` = n_interviews_enum)
+# 
+#   return(other_specify_outlier_week)
+# }
+```
+
+
+# check_roles_interviewers_ts
+```{r fun-check_roles_interviewers_ts}
+# Identify team leads or measurers who are frequently conducting interviews - defined as at least 3 interviews in the past week
+check_roles_interviewers_ts <- function(df) {
+  df <- df |>
+    filter(week >= max(week)-1)  |>
+    group_by(Intro_01, Intro_01a, Intro_01_role, n_interviews_enum) |>
+    summarise(
+      n = n()
+      ) |>
+    ungroup() |>
+    filter(Intro_01_role != "Enumerator",
+           Intro_01_role != "Agent",
+           n >= 3)  |>
+    mutate(`_uuid` = "", start_date = NA_Date_, start_time = NA_Date_, end_date = NA_Date_, end_time = NA_Date_, Variable = "Intro_01", Issue = paste0(Intro_01_role, " a mene ", n, " entretiens au cours de la semaine - pourquoi?"), `Interview outcome` = "", NUTS1 = "", NUTS2 = "", NUTS3 = "", Stratum = "", `Original value` = "", `New value` = "", Action = "", `HoH name` = "",  `HoH age` = "") %>%
+    select(`_uuid`, Enumerator = Intro_01, Team = Intro_01a, `# of interviews by enumerator` = n_interviews_enum, start_date, start_time, end_date, end_time, `Interview outcome`, NUTS1, NUTS2, NUTS3, `HoH name`, `HoH age`, Stratum, Variable, Issue, `Original value`, `New value`, Action)
+  
+  return(df)
+  }
+```
+
+
+# outlier_response_vars
+```{r fun-outlier_response_vars}
+outlier_response_vars <- function(df,
+                                  threshold_DK = params$threshold_DK,
+                                  threshold_RF = params$threshold_RF,
+                                  threshold_OT = params$threshold_OT) {
+  results <- list(
+    count_val_qc(
+      df,
+      val = c("98", "DK"),
+      percentile = threshold_DK,
+      response_label = "Don't know"
+    ),
+    count_val_qc(
+      df,
+      val = c("99", "RF"),
+      percentile = threshold_RF,
+      response_label = "Refuse to answer"
+    ),
+    count_other_qc(
+      df,
+      percentile = threshold_OT,
+      response_label = "Other/specify"
+    )
+  )
+
+  # Remove NULLs
+  results <- results[!sapply(results, is.null)]
+
+  if (length(results) == 0) return(NULL)
+
+  bind_rows(results) %>%
+    arrange(desc(Mean_per_Interview))
+}
+
+# outlier_response_vars <- function(df, threshold_DK = params$threshold_DK, threshold_RF = params$threshold_RF, threshold_OT = params$threshold_OT) {
+#   count_val_qc(
+#     df,
+#     val = c("98", "DK"),
+#     percentile = threshold_DK,
+#     response_label = "Don't know"
+#   ) |>
+#     full_join(count_val_qc(
+#       df,
+#       val = c("99", "RF"),
+#       percentile = threshold_RF,
+#       response_label = "Refuse to answer"
+#     )) |>
+#     full_join(count_other_qc(df, percentile = threshold_OT, response_label = "Other/specify")) |>
+#     arrange(desc(Count))
+# }
+```
+
+```{r fun-outlier_response_vars_week}
+outlier_response_vars_week <- function(
+  df,
+  threshold_DK_week = params$threshold_DK,
+  threshold_RF_week = params$threshold_RF,
+  threshold_OT = params$threshold_OT
+) {
+  results <- list(
+    count_val_week_qc(
+      df,
+      val = c("98", "DK"),
+      percentile = threshold_DK_week,
+      response_label = "Don't know"
+    ),
+    count_val_week_qc(
+      df,
+      val = c("99", "RF"),
+      percentile = threshold_RF_week,
+      response_label = "Refuse to answer"
+    ),
+    count_other_week_qc(
+      df,
+      percentile = threshold_OT,
+      response_label = "Other/specify"
+    )
+  )
+
+  results <- results[!sapply(results, is.null)]
+
+  if (length(results) == 0) return(NULL)
+
+  bind_rows(results) %>%
+    arrange(desc(Mean_per_Interview))
+
+}
+
+```
+
+
+
+# check_duplicates
+```{r fun-check_duplicates}
+check_duplicates <- function(df, var_name, in_hh = FALSE) {
+  # Ensure var_name is a character string
+  var_name <- as.character(var_name)
+
+  # Convert haven_labelled to character if the columns exist
+  df <- df %>%
+    mutate(
+      Intro_06 = as.character(Intro_06),
+      Final_01 = if ("Final_01" %in% names(df)) as.character(Final_01) else NULL,
+      Intro_17 = if ("Intro_17" %in% names(df)) as.character(Intro_17) else NULL,
+      Intro_18 = if ("Intro_18" %in% names(df)) as.character(Intro_18) else NULL
+    )
+
+  df_simp <- df %>%
+    filter(Final_01 == "1") %>%
+    group_by(across(all_of(if (in_hh) c(var_name, "_uuid") else var_name))) %>%
+    filter(
+      !is.na(.data[[var_name]]),
+      .data[[var_name]] != "9999",
+      n() > 1
+    ) %>%
+    mutate(across(where(is.numeric), ~ ifelse(. == lag(.), 1, 0))) %>%
+    mutate(dupl_col_share = case_when(
+      row_number() > 1 ~
+        rowSums(across(where(is.numeric)), na.rm = TRUE) / ncol(across(where(is.numeric))),
+      TRUE ~ NA_real_
+    )) %>%
+    mutate(n_dupl = row_number(),
+           dupl_col_share = scales::percent(dupl_col_share, accuracy = 0.1))
+
+  df_merge <- merge(df_simp %>% select(`_uuid`, n_dupl, dupl_col_share, !!sym(var_name)), df, by = c("_uuid", var_name)) %>%
+    mutate(Variable = var_name) %>%
+    select(
+      Variable,
+      Enumerator = Intro_01,
+      Team = Intro_01a, `# of interviews by enumerator` = n_interviews_enum,
+      start_date, start_time, end_date, end_time,
+      `Original value` = .data[[var_name]],
+      `_uuid`,
+      `_index`,
+      `Interview outcome` = Final_01,
+      NUTS1 = Intro_03a_NUTS1, NUTS2 = Intro_03b_NUTS2, NUTS3 = Intro_03c_NUTS3,
+      Stratum = stratum,
+      `# of duplicates` = n_dupl,
+      `% duplicate columns` = dupl_col_share,
+      `HoH name` = HeadName, `HoH age` = HeadAge,
+      `# of interviews by enumerator` = n_interviews_enum, complete_interview
+    ) %>%
+    arrange(`Original value`) %>%
+    ungroup()
+
+  return(df_merge)
+}
+
+```
+```{r fun-check_duplicates_in_repeat_group}
+check_duplicates_in_repeat_group <- function(df, var_name) {
+  var_name <- as.character(var_name)
+
+  df <- df %>%
+    mutate(
+      row_id__ = row_number(),
+      Intro_06 = as.character(Intro_06),
+      Final_01 = if ("Final_01" %in% names(df)) as.character(Final_01) else NULL,
+      Intro_17 = if ("Intro_17" %in% names(df)) as.character(Intro_17) else NULL,
+      Intro_18 = if ("Intro_18" %in% names(df)) as.character(Intro_18) else NULL
+    )
+
+  # Step 1: Filter for valid, complete rows
+  df_valid <- df %>%
+    filter(
+      complete_interview == 1,
+      !is.na(.data[[var_name]]),
+      .data[[var_name]] != "9999"
+    ) %>%
+    mutate(val_check = .data[[var_name]])
+
+  # Step 2: Group by _uuid + value and flag only if duplicated in same _uuid
+  df_valid <- df_valid %>%
+    group_by(`_uuid`, val_check) %>%
+    mutate(dupl_count__ = n()) %>%
+    ungroup()
+
+  # Step 3: Keep only rows duplicated within _uuid
+  df_filtered <- df_valid %>%
+    filter(dupl_count__ > 1) %>%
+    mutate(
+      Variable = var_name,
+      `# of duplicates` = dupl_count__,
+      `% duplicate columns` = NA_character_
+    )
+
+  # Step 4: Output in original format
+  df_filtered %>%
+    select(
+      Variable,
+      Enumerator = Intro_01,
+      Team = Intro_01a,
+      `# of interviews by enumerator` = n_interviews_enum,
+      start_date, start_time, end_date, end_time,
+      `Original value` = val_check,
+      `_uuid`,
+      `_index`,
+      `Interview outcome` = Final_01,
+      NUTS1 = Intro_03a_NUTS1,
+      NUTS2 = Intro_03b_NUTS2,
+      NUTS3 = Intro_03c_NUTS3,
+      Stratum = stratum,
+      `# of duplicates`,
+      `HoH name` = HeadName,
+      `HoH age` = HeadAge,
+      `# of interviews by enumerator` = n_interviews_enum,
+      complete_interview, 
+     any_of(c("_parent_index", "_index"))
+    ) %>%
+    arrange(`Original value`)
+}
+
+
+
+```
+
+
+# check_duplicates_ts
+```{r fun-check_duplicates_ts}
+check_duplicates_ts <- function(df, var, in_hh = FALSE) {
+  df %>%
+    check_duplicates({{ var }}, in_hh) %>%
+    mutate(Variable, Issue = "Duplicate entry needs to be checked", `New value` = "", Action = "") %>%
+    select(`_uuid`, Enumerator, Team, `# of interviews by enumerator`, start_date, start_time, end_date, end_time, `Interview outcome`, NUTS1, NUTS2, NUTS3, Stratum, `HoH name`, `HoH age`, Variable, Issue, `Original value`, `New value`, Action)
+}
+```
+
+
+# enumerator_summary
+```{r fun-enumerator_summary}
+enumerator_summary <- function(df) {
+  df |>
+    group_by(Intro_01, Intro_01a, n_interviews_enum_complete) |>
+    summarise(
+      `# of submissions` = n(),
+      `First date` = min(start_date),
+      `Last date` = max(start_date),
+      `# of days` = as.Date(`Last date`) - as.Date(`First date`) + 1
+    ) |>
+    ungroup() |>
+    arrange(desc(`# of submissions`))
+}
+```
+
+# team_summary
+```{r fun-team_summary}
+team_summary <- function(df) {
+  df |>
+    group_by(Intro_01a) |>
+    summarise(
+      `# of submissions` = n(),
+      `First date` = min(start_date),
+      `Last date` = max(start_date),
+      `# of days` = as.Date(`Last date`) - as.Date(`First date`) + 1
+    ) |>
+    ungroup() |>
+    arrange(desc(`# of submissions`))
+}
+```
+
+# z_scores_anthro
+```{r fun-z_scores_anthro}
+z_scores_anthro <- function(df) {
+  df <- df |>
+    #filter(complete_interview == 1) |>
+    mutate(across(c(
+      child_weight, child_height_length, childnametouseAGE, AN8, AN10_cm
+    ), as.character)) |>
+    mutate(across(c(
+      child_weight, child_height_length, childnametouseAGE, AN8, AN10_cm
+    ), as.numeric)) |>
+    mutate(
+      child_height_length_l = case_when(AN8 == "2" ~ child_height_length,
+                        TRUE ~ NA_real_),
+      child_height_length_h = case_when(AN8 == "1" ~ child_height_length,
+                        TRUE ~ NA_real_)
+    ) |>
+    mutate(child_age_days = childnametouseAGE * (365.25 / 12)) # z-score function requires age in days
+  
+  # Weight for length
+  df <-
+    addWGSR(
+      data = df,
+      sex = "childnametouseSEX",
+      firstPart = "child_weight",
+      secondPart = "child_height_length_l",
+      index = "wfl"
+    )
+  # Weight for height
+  df <-
+    addWGSR(
+      data = df,
+      sex = "childnametouseSEX",
+      firstPart = "child_weight",
+      secondPart = "child_height_length_h",
+      index = "wfh"
+    )
+  # Weight for age
+  df <-
+    addWGSR(
+      data = df,
+      sex = "childnametouseSEX",
+      firstPart = "child_weight",
+      secondPart = "child_age_days",
+      index = "wfa"
+    )
+  # Length for age
+  df <-
+    addWGSR(
+      data = df,
+      sex = "childnametouseSEX",
+      firstPart = "child_height_length_l",
+      secondPart = "child_age_days",
+      index = "lfa"
+    )
+  # Height for age
+  df <-
+    addWGSR(
+      data = df,
+      sex = "childnametouseSEX",
+      firstPart = "child_height_length_h",
+      secondPart = "child_age_days",
+      index = "hfa"
+    )
+  # MUAC for age
+  df <-  addWGSR(
+      data = df,
+      sex = "childnametouseSEX",
+      firstPart = "AN10_cm",
+      secondPart = "child_age_days",
+      index = "mfa"
+    )
+  
+df <- df |> 
+  mutate(across(c(wflz, wfhz, wfaz, lfaz, hfaz, mfaz), ~ factor(case_when(
+    . < -3 ~ "<-3",
+    . >= -3 & . < -2 ~ "-3:-2",
+    . >= -2 & . <= 2 ~ "-2:2",
+    . > 2 & . <= 3 ~ "2:3",
+    . > 3 ~ ">3"
+  ), levels = c("<-3", "-3:-2", "-2:2", "2:3", ">3")), .names = "{.col}_bin"))
+  
+  return(df)
+}
+```
+
+# z_scores_anthro_ts
+```{r fun-z_scores_anthro_ts}
+z_scores_anthro_ts <- function(df) {
+  get_outliers <- function(df, var_z, measure_col) {
+    df <- df |>
+      pivot_longer(cols = var_z,
+                   names_to = "var_z",
+                   values_to = "val_z") |>
+      mutate(Variable = as.character(measure_col),
+      `Original value` = !!sym(measure_col)) |>
+      select(
+        `_uuid`,
+        `_index`,
+        Enumerator = Intro_01,
+        Team = Intro_01a,
+        Final_01,
+        complete_interview,
+        `# of interviews by enumerator` = n_interviews_enum,
+        `Original value`,
+        Variable,
+        val_z,
+        start_date,
+        start_time,
+        end_date,
+        end_time,
+        `Interview outcome` = Final_01,
+        NUTS1 = Intro_03a_NUTS1,
+        NUTS2 = Intro_03b_NUTS2,
+        NUTS3 = Intro_03c_NUTS3,
+        Stratum = stratum,
+        `HoH name` = HeadName,
+        `HoH age` = HeadAge,
+        `Age (months)` = childnametouseAGE,
+      `MUAC (cm)` = AN10_cm,
+      `Weight (kg)` = child_weight,
+      `Length/height (cm)` = child_height_length,
+      `Standing or lying` = AN8,
+      Oedema = AN9
+      ) |>
+      filter(abs(val_z) > 5)
+
+      
+    return(df)
+  }
+  
+  df <- df |>
+    z_scores_anthro()
+
+  df_bind <- rbind(get_outliers(df, "wfaz", "child_weight")|> mutate(Variable = "Weight and/or age"),
+                   get_outliers(df, "hfaz", "child_height_length_h") |>  mutate(Variable = "Height and/or age"),
+                   get_outliers(df, "lfaz", "child_height_length_l")|>  mutate(Variable = "Length and/or age"),
+                   get_outliers(df, "mfaz", "AN10_cm") |>  mutate(Variable = "MUAC and/or age"),
+                   get_outliers(df, "wflz", "child_weight") |>  mutate(Variable = "Weight and/or length"),
+                   get_outliers(df, "wfhz", "child_weight") |>  mutate(Variable = "Height and/or height")) |>
+    mutate(`New value` = "",
+           `Original value` = as.character(`Original value`)) |>
+    select(-val_z)
+  
+  return(df_bind)
+}
+```
+
+#anthro_measure_method
+```{r fun-anthro_measure_method}
+anthro_measure_method <- function(df) {
+  df |>
+    mutate(
+      expected_AN8 = ifelse(childnametouseAGE < 24, 2, 1),
+      mismatch_flag = AN8 != expected_AN8,
+      Variable = "AN8",
+      var = AN8
+    ) |>
+    filter(mismatch_flag) |>
+    select(
+      `_uuid`,
+      `_index`,
+      Enumerator = Intro_01,
+      Team = Intro_01a,
+      Final_01,
+      complete_interview,
+      `# of interviews by enumerator` = n_interviews_enum,
+      `Original value` = var,
+      Variable,
+      start_date,
+      start_time,
+      end_date,
+      end_time,
+      `Interview outcome` = Final_01,
+      NUTS1 = Intro_03a_NUTS1,
+      NUTS2 = Intro_03b_NUTS2,
+      NUTS3 = Intro_03c_NUTS3,
+      Stratum = stratum,
+      `HoH name` = HeadName,
+      `HoH age` = HeadAge,
+      `Age (months)` = childnametouseAGE,
+      `MUAC (cm)` = AN10_cm,
+      `Weight (kg)` = child_weight,
+      `Length/height (cm)` = child_height_length,
+      `Standing or lying` = AN8,
+      Oedema = AN9
+    )
+}
+
+
+```
+
+#Oedema check
+```{r fun-oedema_check}
+anthro_oedema_check <- function(df) {
+  df |>
+    mutate(AN9_num = as.numeric(as.character(AN9))) |>
+    filter(AN9_num == 1) |>
+    mutate(
+      Variable = "AN9",
+      `Original value` = AN9
+    ) |>
+    select(
+      `_uuid`,
+      `_index`,
+      Enumerator = Intro_01,
+      Team = Intro_01a,
+      Final_01,
+      complete_interview,
+      `# of interviews by enumerator` = n_interviews_enum,
+      `Original value`,
+      Variable,
+      start_date,
+      start_time,
+      end_date,
+      end_time,
+      `Interview outcome` = Final_01,
+      NUTS1 = Intro_03a_NUTS1,
+      NUTS2 = Intro_03b_NUTS2,
+      NUTS3 = Intro_03c_NUTS3,
+      Stratum = stratum,
+      `HoH name` = HeadName,
+      `HoH age` = HeadAge,
+      `Age (months)` = childnametouseAGE,
+      `MUAC (cm)` = AN10_cm,
+      `Weight (kg)` = child_weight,
+      `Length/height (cm)` = child_height_length,
+      `Standing or lying` = AN8,
+      Oedema = AN9
+    )
+}
+
+
+
+```
+# 
+```{r fun-progress_ts_stratum}
+progress_ts_stratum <- function(df) {
+  df <- df |>
+      filter(stratum != "Refugees sites Est/Nord/Adamaoua (proGres)", !is.na(complete_interview)) |>
+      group_by(Intro_06) %>%
+  filter(!(n() > 1 & complete_interview == 0)) %>%
+  ungroup() |>
+  group_by(complete_interview) |>
+  distinct(Intro_06, .keep_all = TRUE) |>
+  ungroup() |>
+    mutate(complete_interview = ifelse(complete_interview == 1, "complete", "incomplete")) |>
+      group_by(stratum, replace, complete_interview) |>
+      summarise(submitted = n()) |>
+      ungroup() |>
+      pivot_wider(
+        names_from = c(replace, complete_interview),
+        values_from = c(submitted)
+      ) %>%
+      mutate(
+        across(everything(), ~ ifelse(is.na(.), 0, .)),
+        total_submission = main_complete + main_incomplete + replace_complete + replace_incomplete,
+        total_complete = main_complete + replace_complete
+      ) |>
+      left_join(
+          df |>
+            filter(
+              stratum != "Refugees sites Est/Nord/Adamaoua (proGres)",!is.na(complete_interview)
+            ) |>
+            ungroup() |>
+            mutate(
+              complete_interview = ifelse(complete_interview == 1, "complete", "incomplete")
+            ) |>
+            group_by(stratum, replace) |>
+            summarise(n_sample_stratum = max(target)) |>
+            ungroup() |>
+            pivot_wider(
+              names_from = c(replace),
+              values_from = c(n_sample_stratum)
+            ) %>%
+            mutate(across(everything(), ~ ifelse(is.na(.), 0, .)))) |>
+      mutate(total_sample = main + replace,
+             required = main - total_complete,
+             available = total_sample-total_submission,
+             additional_required = ifelse(required-available > 0, required-available, 0)) |>
+    rename(main_sample = main, replace_sample = replace)
+  
+  return(df)
+}
+```
+
+
+```{r fun-progress_ts_location}
+progress_ts_location <- function(df, location, n_sample_location) {
+  df <- df |>
+      filter(stratum != "Refugees sites Est/Nord/Adamaoua (proGres)", !is.na(complete_interview)) |>
+      group_by(Intro_06) %>%
+  filter(!(n() > 1 & complete_interview == 0)) %>%
+  ungroup() |>
+  group_by(complete_interview) |>
+  distinct(Intro_06, .keep_all = TRUE) |>
+  ungroup() |>
+    mutate(complete_interview = ifelse(complete_interview == 1, "complete", "incomplete")) |>
+      group_by(stratum, {{location}}, replace, complete_interview)|>
+      group_by(stratum, {{location}}, replace, complete_interview) |>
+      summarise(submitted = n()) |>
+      ungroup() |>
+      pivot_wider(
+        names_from = c(replace, complete_interview),
+        values_from = c(submitted)
+      ) %>%
+      mutate(
+        across(everything(), ~ ifelse(is.na(.), 0, .)),
+        total_submission = main_complete + main_incomplete + replace_complete + replace_incomplete,
+        total_complete = main_complete + replace_complete
+      ) |>
+      left_join(
+          df |>
+            filter(
+              stratum != "Refugees sites Est/Nord/Adamaoua (proGres)",!is.na(complete_interview)
+            ) |>
+            mutate(
+              complete_interview = ifelse(complete_interview == 1, "complete", "incomplete")
+            ) |>
+            group_by(stratum, {{location}}, replace) |>
+            summarise(n_sample = max({{n_sample_location}})) |>
+            ungroup() |>
+            pivot_wider(
+              names_from = c(replace),
+              values_from = c(n_sample)
+            ) %>%
+            mutate(across(everything(), ~ ifelse(is.na(.), 0, .)))) |>
+      mutate(total_sample = main + replace,
+             required = main - total_complete,
+             available = total_sample-total_submission,
+             additional_required = ifelse(required-available > 0, required-available, 0)) |>
+    rename(main_sample = main, replace_sample = replace)
+  
+  return(df)
+}
+```
+
+
+# dem_tab
+```{r fun-dem_tab}
+dem_tab <- function(df) {
+  total_hhs <- df |>
+    group_by(`_uuid`) |>
+    filter(complete_interview == 1) |>
+    mutate(
+      under15 = case_when(agetouse < 15 ~ 1, TRUE ~ 0),
+      under18 = case_when(agetouse < 18 ~ 1, TRUE ~ 0),
+      over15 = case_when(agetouse >= 15 ~ 1, TRUE ~ 0),
+      over18 = case_when(agetouse >= 18 ~ 1, TRUE ~ 0)) |>
+    summarise(
+      `Household size` = n(),
+      `Under 15-year-olds in household` = sum(under15),
+      `Under 18-year-olds in household` = sum(under18),
+      `Over 15-year-olds in household` = sum(over15),
+      `Over 18-year-olds in household` = sum(over18)) |>
+    ungroup() |>
+    summarise(
+      `Mean household size` = mean(`Household size`),
+      `Mean under 15-year-olds in household` = mean(`Under 15-year-olds in household`),
+      `Mean under 18-year-olds in household` = mean(`Under 18-year-olds in household`),
+      `Mean over 15-year-olds in household` = mean(`Over 15-year-olds in household`),
+      `Mean over 18-year-olds in household` = mean(`Over 18-year-olds in household`)
+    ) |>
+    pivot_longer(everything(), names_to = "Variable", values_to = "Value")
+  
+  total <- df |>
+    filter(complete_interview == 1) |>
+    mutate(male = case_when(HH_02 == "1" ~ 1, TRUE ~ 0),
+           female = case_when(HH_02 == "2" ~ 1, TRUE ~ 0)) |>
+    summarise(
+      `Mean age` = mean(agetouse),
+      `Male among over 15-year-olds (%)` = mean(`male`) * 100,
+      `Female among over 15-year-olds (%)` = mean(`female`) * 100
+    ) |>
+    pivot_longer(everything(), names_to = "Variable", values_to = "Value")
+  
+  over15 <- df |>
+    filter(complete_interview == 1, agetouse >= 15) |>
+    mutate(male = case_when(HH_02 == "1" ~ 1, TRUE ~ 0),
+           female = case_when(HH_02 == "2" ~ 1, TRUE ~ 0)) |>
+    summarise(
+      `Male among over 15-year-olds (%)` = mean(`male`) * 100,
+      `Female among over 15-year-olds (%)` = mean(`female`) * 100
+    ) |>
+    pivot_longer(everything(), names_to = "Variable", values_to = "Value")
+  
+  over18 <- df |>
+    filter(complete_interview == 1, agetouse >= 18) |>
+    mutate(male = case_when(HH_02 == "1" ~ 1, TRUE ~ 0),
+           female = case_when(HH_02 == "2" ~ 1, TRUE ~ 0)) |>
+    summarise(
+      `Male among over 18-year-olds (%)` = mean(`male`) * 100,
+      `Female among over 18-year-olds (%)` = mean(`female`) * 100
+    ) |>
+    pivot_longer(everything(), names_to = "Variable", values_to = "Value")
+  
+  df_bind <-  rbind(total_hhs, total, over15, over18) |>
+    mutate(Value = round(Value, 1))
+  
+  return(df_bind)
+}
+```
+
+# qa_list_xlsx
+```{r fun-qa_list_xlsx}
+# Save list of qa tables as an .xlsx file
+qa_list_xlsx <- function(list, folder, filename) {
+  folder_date <- paste0(folder, format(Sys.Date(), "%Y-%m-%d"))
+
+
+  if (!dir.exists(folder_date)) {
+    dir.create(folder_date)
+  }
+
+  output_path <- file.path(folder_date, filename)
+
+  writexl::write_xlsx(list, output_path, col_names = TRUE)
+}
+```
+
+```{r fun-calculate_complete_interviews}
+#' Calculate Complete Interviews
+#'
+#' @param df The dataframe to filter.
+#' @param target The target number of interviews.
+#' @return A list with complete interviews and percentage.
+#' @export
+calculate_complete_interviews <- function(df, target) {
+  compl_interviews <- df |>
+    filter(complete_interview == 1)
+  
+  complete_interviews <- percent(nrow(compl_interviews) / target)
+  return(list(compl_interviews = compl_interviews, complete_interviews = complete_interviews))
+}
+```
+
+```{r fun-plot_interviews_by_day}
+#' Plot Interviews by Day
+#'
+#' @param df The dataframe to plot.
+#' @param col_fill The fill color for the plot.
+#' @param col_line The line color for the plot.
+#' @return A ggplot object.
+#' @export
+plot_interviews_by_day <- function(df, col_fill, col_line) {
+  df |>
+    daily_interviews() |>
+    pivot_longer(c(-Date, -`# of interviews`),
+                 names_to = "Week",
+                 values_to = "Daily mean/week") |>
+    mutate(`Daily mean/week` = `Daily mean/week` * 7) |>
+    filter(!is.na(`Daily mean/week`)) |>
+    ggplot(aes(x = as.Date(Date), y = `# of interviews`)) +
+    geom_col(fill = col_fill) +
+    geom_line(aes(x = as.Date(Date), y = `Daily mean/week`),
+              col = col_line,
+              group = 1) +
+    theme_unhcr() +
+    labs(x = "", y = "Complete\ninterviews")
+}
+```
+
+```{r calculate_sample_targets}
+#' Calculate Sample Targets
+#'
+#' @param df The dataframe to summarize.
+#' @return A summarized dataframe.
+#' @export
+calculate_sample_targets <- function(df) {
+  df |>
+    group_by(stratum) |>
+    filter(
+      complete_interview == 1,
+      stratum != "Refugees sites Est/Nord/Adamaoua (proGres)",
+      stratum != "Asylum-seekers Yaoundé/Douala"
+    ) |>
+    summarise(`Complete interviews` = n(),
+              Target = max(target, na.rm = TRUE)) |>
+    ungroup() |>
+    mutate(
+      Target = case_when(
+        stratum == "Refugees out-of-site Est/Nord/Adamaoua" ~ 708,
+        stratum == "Refugees Yaoundé/Douala" ~ 500,
+        stratum == "Refugees townships Est" ~ 500,
+        TRUE ~ Target
+      )
+    ) |>
+    mutate(
+      `Complete interviews (up to target)` = pmin(`Complete interviews`, Target),
+      `Pending interviews` = pmax(Target - `Complete interviews`, 0),
+      `Sample completion` = percent(pmin(`Complete interviews` / Target, 1), accuracy = 1)
+    )
+}
+```
+
+```{r plot_progress_by_stratum}
+#' Plot Progress by Stratum
+#'
+#' @param df The dataframe to plot.
+#' @return A ggplot object.
+#' @export
+plot_progress_by_stratum <- function(df) {
+  df |>
+    filter(complete_interview == 1,
+           stratum != "Refugees sites Est/Nord/Adamaoua (proGres)") |>
+    group_by(stratum) |>
+    arrange(start_date) |>
+    mutate(interview_count = row_number()) |>
+    ungroup() |> 
+    select(interview_count, start_date, stratum) |>
+    ggplot() +
+    geom_line(aes(as.Date(start_date), interview_count, color = stratum, group = stratum)) +
+    theme_unhcr(grid = "", axis = "x", axis_title = FALSE) +
+    scale_color_unhcr_d(palette = "pal_unhcr") +
+    labs(x = "", y = "Complete interviews", color = "")
+}
+```
+
+```{r group_function}
+#' Group Function
+#'
+#' @param df The dataframe to group.
+#' @param group The grouping variable.
+#' @return A grouped dataframe.
+#' @export
+group_function <- function(df, group) {
+  df |>
+    mutate(weeks_since_begin = floor(days_since_begin / 7) + 1) |>
+    group_by(weeks_since_begin, {{group}}) |>
+    filter(complete_interview == 1) |>
+    mutate(stratum = as.factor({{group}})) |>
+    summarise(count = n()) |>
+    ungroup() |> 
+    to_factor()
+}
+```
+
+```{r plot_heatmap_output}
+#' Heatmap Output
+#'
+#' @param df The dataframe to plot.
+#' @param group The grouping variable.
+#' @return A ggplot object.
+#' @export
+heatmap_output <- function(df, group) {
+  ggplot(df, aes(x = weeks_since_begin, y = fct_rev({{group}}))) +
+    geom_tile(
+      aes(fill = count),
+      color = "white",
+      lwd = .5,
+      linetype = 1
+    ) +
+    geom_text(aes(label = count), 
+              color = if_else(df$count > max(df$count) / 2, "white", 
+                              unhcr_pal(n = 5, "pal_grey")[5]),
+              size = 10 / ggplot2::.pt) +
+    theme_unhcr(
+      font_size = 13,
+      grid = FALSE,
+      axis = FALSE,
+      axis_title = TRUE,
+      legend = FALSE
+    ) +
+    labs(x = "Week", y = "") +
+    scale_fill_stepsn(colors = unhcr_pal(n = 5, "pal_blue"), n.break = 5)
+}
+```
+
+CHECKS ADDED BY PETRA
+1. COOPERATION RATE 
+
+```{r fun-denom_cooperation}
+# Function for Denominator of Cooperation Rate
+denom_cooperation <- function(df) {
+  df <- df |>
+    mutate(denom_cooperation = case_when(
+      Final_01 %in% c(1, 2, 3, 21, 22) ~ 1,
+      Final_01 %in% c(23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43) ~ 0,
+      TRUE ~ NA_real_  # Ensures all cases are handled
+    ))
+  return(df)
+}
+```
+```{r fun-num_cooperation}
+# Function for Numerator of Cooperation Rate
+num_cooperation <- function(df) {
+  df <- df |>
+    mutate(num_cooperation = case_when(
+      Final_01 %in% c(1, 2) ~ 1,
+      Final_01 %in% c(3, 21, 22, 23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43) ~ 0,
+      TRUE ~ NA_real_
+    ))
+  return(df)
+}
+```
+
+```{r fun-cooperation_rate_enum}
+#Cooperation rate per enumerator
+# cooperation_rate_enum
+cooperation_rate_enum <- function(dat, threshold = params$threshold_coop) {
+  coop_r <- dat |>
+    filter(n_interviews_enum > 3) |>
+    group_by(Intro_01, Intro_01a, n_interviews_enum) |>
+    summarize(rate = sum(num_cooperation, na.rm = TRUE) / sum(denom_cooperation, na.rm = TRUE)) |>
+    ungroup() |>
+    filter(rate < threshold) |>
+    mutate(rate = percent(rate, accuracy = 0.1)) |>
+    rename(Enumerator = Intro_01, Team = Intro_01a, `# of interviews by enumerator` = n_interviews_enum, `Cooperation rate` = rate, `# of interviews by enumerator` = n_interviews_enum) |>
+    ungroup()
+  return(coop_r)
+}
+```
+
+```{r fun-cooperation_rate_total}
+#total cooperation rate
+cooperation_rate_total <- function(df) {
+  coop_r <- calculate_rate(df,
+                           var = num_cooperation,
+                           eligible_var = denom_cooperation
+  ) |>
+    pull() %>%
+    percent(., accuracy = 0.1)
+
+  return(coop_r)
+}
+```
+
+2. REPLACEMENT RATE - PETRA
+*Denominator is complete_interview
+# complete_interview_3 - numerator 
+
+```{r fun-complete_interview_repl}
+complete_interview_repl <- function(df, key_vars) {
+  df <- df |>
+    ungroup() %>%
+    mutate(
+      nmissing_key_vars = rowSums(
+        is.na(
+          select(., all_of(key_vars))
+        )
+      ),
+      complete_interview_repl = case_when(
+        nmissing_key_vars < 4 & as.numeric(as.character(Intro_16)) == 2 ~ 1,
+        TRUE ~ 0
+      )
+    )
+
+  return(df)
+}
+     
+```
+
+
+```{r fun-replacement_rate_total}
+#total replacement rate 
+replacement_rate_total <- function(df) {
+  repl_r <- calculate_rate(df,
+                           var = complete_interview_repl,
+                           eligible_var = complete_interview
+  ) |>
+    pull() %>%
+    percent(., accuracy = 0.1) 
+  
+  return(repl_r)
+}
+```
+
+#3. Contact rate
+
+
+```{r fun-denom_contact_rate}
+# Function for Denominator of Contact Rate
+denom_contact_rate <- function(df) {
+  df <- df |>
+    mutate(denom_contact = case_when(
+      Final_01 %in% c(1, 2, 3, 21, 22,23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43,44) ~ 1,
+      TRUE ~ NA_real_  # Ensures all cases are handled
+    ))
+  return(df)
+}
+```
+```{r fun-num_contact_rate}
+# Function for Numerator of contact Rate
+num_contact_rate <- function(df) {
+  df <- df |>
+    mutate(num_contact = case_when(
+      Final_01 %in% c(1, 2,3,21,22,23,24,25) ~ 1,
+      Final_01 %in% c( 31, 32, 33, 34, 35, 41, 42, 43,44) ~ 0,
+      TRUE ~ NA_real_
+    ))
+  return(df)
+}
+```
+
+```{r fun-contact_rate_total}
+#total contact rate 
+contact_rate_total <- function(df) {
+  cont_r <- calculate_rate(df,
+                           var = num_contact,
+                           eligible_var = denom_contact
+  ) |>
+    pull() %>%
+    percent(., accuracy = 0.1) 
+  
+  return(cont_r)
+}
+```
+
+#4. Replacement need (% of household that need to be replaced) - PETRA
+
+```{r fun-denom_replneed_rate}
+# Function for Denominator of Replacement need
+denom_replneed_rate <- function(df) {
+  df <- df |>
+    mutate(denom_replneed = case_when(
+      Final_01 %in% c(1, 2, 3, 21, 22,23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43)  & as.numeric(as.character(Intro_16)) == 1 ~ 1,
+      TRUE ~ NA_real_  # Ensures all cases are handled
+    ))
+  return(df)
+}
+```
+```{r fun-num_replneed_rate}
+# Function for Numerator of replacement need
+num_replneed_rate <- function(df) {
+  df <- df |>
+    mutate(num_replneed = case_when(
+      Final_01 %in% c(3, 21, 22,23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43) & as.numeric(as.character(Intro_16)) == 1 ~ 1,
+      Final_01 %in% c(1,2) & as.numeric(as.character(Intro_16)) == 1 ~ 0,
+      TRUE ~ NA_real_
+    ))
+  return(df)
+}
+```
+
+```{r fun-replneed_rate_total}
+#total replacement need rate 
+replneed_rate_total <- function(df) {
+  repln_r <- calculate_rate(df,
+                           var = num_replneed,
+                           eligible_var = denom_replneed
+  ) |>
+    pull() %>%
+    percent(., accuracy = 0.1) 
+  
+  return(repln_r)
+}
+```
+
+#5. % of replacement done  - % that needs to be replaced that was replaced
+
+```{r fun-denom_repldone_rate}
+# Function for Denominator of Replacements done
+denom_repldone_rate <- function(df) {
+  df <- df |>
+    mutate(denom_repldone = case_when(
+      Final_01 %in% c(3, 21, 22,23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43)  & as.numeric(as.character(Intro_16)) == 1 ~ 1,
+      TRUE ~ NA_real_  # Ensures all cases are handled
+    ))
+  return(df)
+}
+```
+```{r fun-num_repldone_rate}
+# Function for Numerator of replacements done
+num_repldone_rate <- function(df) {
+  df <- df |>
+    mutate(num_repldone = case_when(
+      Final_01 %in% c(1,2) & as.numeric(as.character(Intro_16)) == 2 ~ 1,
+      Final_01 %in% c(3, 21, 22,23, 24, 25, 31, 32, 33, 34, 35, 41, 42, 43) & as.numeric(as.character(Intro_16)) == 2 ~ 1,
+      TRUE ~ NA_real_
+    ))
+  return(df)
+}
+```
+
+```{r fun-repldone_rate_total}
+#total replacement need rate
+repldone_rate_total <- function(df) {
+  repld_r <- calculate_rate(df,
+                           var = num_repldone,
+                           eligible_var = denom_repldone
+  ) |>
+    pull() %>%
+    percent(., accuracy = 0.1)
+
+  return(repld_r)
+}
+```
+
+
+#Time checks - PETRA
+
+```{r fun-module_time}
+#Mean time per questionnaire, modules and interview - {r fun-module_times}
+module_time <- function(df) {
+  # Select only time variables that exist in the dataframe
+  existing_vars <- intersect(params$time_variables, names(df))
+
+  # If none exist, return an empty tibble
+  if (length(existing_vars) == 0) {
+    return(tibble(variable = character(), Average_Time = numeric(), label = character(), section = character()))
+  }
+
+  # Calculate means for available time variables
+  mod_t <- df %>%
+    filter(start_date == end_date,
+           complete_interview == 1) %>%
+    group_by(weeks_since_begin) %>%
+    mutate(across(all_of(existing_vars), ~ if_else(!is.na(.x) & .x > 0, .x, NA_real_))) %>%  
+    summarize(across(all_of(existing_vars), ~ mean(.x, na.rm = TRUE))) %>%
+    pivot_longer(cols = -weeks_since_begin, names_to = "variable", values_to = "Average_Time") %>%
+    left_join(params$time_variable_labels, by = "variable") %>%
+    arrange(match(variable, params$time_variables)) # Keep original order
+
+  return(mod_t)
+}
+
+```
+
+
+```{r fun-module_time_enum}
+module_time_enum <- function(df) {
+  # Select only time variables that exist in the dataset
+  existing_vars <- intersect(params$time_variables, names(df))
+
+  # If none exist, return an empty tibble
+  if (length(existing_vars) == 0) {
+    return(tibble(Enumerator = character(), Team = character(), Variable = character(),
+                  Average_Time = numeric(), label = character(), section = character()))
+  }
+
+  # Compute mean module time per enumerator
+  mod_t_enum <- df |>
+    filter(start_date == end_date) %>%
+    mutate(across(all_of(existing_vars), ~ if_else(!is.na(.x) & .x > 0, .x, NA_real_))) %>%  
+    group_by(Intro_01, Intro_01a, n_interviews_enum, n_interviews_week) |> 
+    summarize(across(all_of(existing_vars), ~ mean(.x, na.rm = TRUE), .names = "mean_{.col}"), .groups = "drop") |>
+    pivot_longer(cols = starts_with("mean_"), names_to = "variable", values_to = "Average_Time") |>
+    mutate(Variable = sub("mean_", "", variable)) |>
+    left_join(params$time_variable_labels, by = "variable") |>
+    arrange(match(variable, params$time_variables))  # Keep original order
+
+  return(mod_t_enum)
+}
+
+```
+
+```{r fun-check_sd_time_modules_enum}
+# Outliers per enumerator
+check_sd_time_modules_enum <- function(df) {
+  # Compute mean module times per enumerator
+  enum_mean_time <- module_time_enum(df) |> rename(Mean_enum = Average_Time)
+
+  # Compute global mean & SD per module across enumerators
+  global_stats <- enum_mean_time |>
+    group_by(Variable) |>
+    summarise(Global_mean = round(mean(Mean_enum, na.rm = TRUE), 2),
+              Global_sd = round(sd(Mean_enum, na.rm = TRUE), 2)) |>
+    mutate(Upper_thresh = round(Global_mean + 3 * Global_sd, 2),
+           Lower_thresh = round(pmax(Global_mean - 3 * Global_sd, 0), 2))  # Ensure lower bound is not negative 
+
+  # Merge global stats with enumerator mean data
+  outlier_time <- enum_mean_time |>
+    left_join(global_stats, by = "Variable") |>
+    filter(Mean_enum >= Upper_thresh | Mean_enum <= Lower_thresh) |>  # Flag enumerators with extreme values
+    mutate(
+      `New value` = case_when(
+        Mean_enum < Lower_thresh ~ "This enumerator completes this module significantly quicker than average, please check.",
+        Mean_enum > Upper_thresh ~ "This enumerator takes significantly longer than average to complete this module, please check."
+      ),
+      Action = ""
+    ) |>
+    select(
+      Enumerator = Intro_01a,
+      Team = Intro_01,
+      Variable = variable,
+      `# of interviews by enumerator` = n_interviews_enum,
+      `# of interviews by enumerator per week` = n_interviews_week,
+      `Old value` = Mean_enum,
+      `Global mean`= Global_mean,
+      `Global SD` = Global_sd,
+      `Upper threshold` = Upper_thresh,
+      `Lower threshold` = Lower_thresh,
+      # `New value`,
+      Action
+    )
+
+  return(outlier_time)
+}
+
+```
+
+# Check to compare Final_01 to complete_interview
+
+```{r fun-check_final_vs_complete}
+check_final_vs_complete <- function(df) {
+  df <- df %>%
+    mutate(Final_01 = as.factor(Final_01))  # Convert Final_01 to factor
+
+  # Filter only flagged cases
+  df_flagged <- df %>%
+    filter(Final_01 %in% c("1", "2") & complete_interview == 0)  # Keep only flagged cases
+
+  # Format the output to match logs structure
+  df_output <- df_flagged %>%
+    mutate(Variable = "Final_01",  # Variable name should always be Final_01
+           `Original value` = as.character(Final_01)) %>%  # Store original value as character for logs
+    select(
+      Variable,
+      Enumerator = Intro_01,
+      Team = Intro_01a, 
+      start_date, start_time, end_date, end_time, 
+      `Original value`,
+      `_uuid`,
+      `_index`,
+      `Interview outcome` = Final_01,
+      complete_interview,
+      NUTS1 = Intro_03a_NUTS1, NUTS2 = Intro_03b_NUTS2, NUTS3 = Intro_03c_NUTS3,
+      Stratum = stratum,
+      `HoH name` = HeadName, `HoH age` = HeadAge,
+      `# of interviews by enumerator` = n_interviews_enum
+    ) %>%
+    arrange(`Original value`) %>%
+    ungroup()
+
+  return(df_output)
+}
+
+
+```
+

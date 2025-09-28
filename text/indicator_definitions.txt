@@ -1,0 +1,293 @@
+**Overview**
+
+<details>
+  <summary>Sample completion</summary>
+  <p>Sample completion is calculated as the percentage of completed interviews out of the total sample size (4,050).</p>
+</details>
+
+<details>
+  <summary>Complete interviews</summary>
+  <p>
+    A complete interview—or one that does not trigger replacement—is defined as an interview in which the correct protocol (three contact attempts) has been followed for all eligible respondents (excluding the head of household), and at least the head of household and one randomly selected adult have been interviewed.<br><br>
+    Eligible respondents include:<br>
+    1. Head of household<br>
+    2. Randomly selected adult<br>
+    3. Randomly selected woman<br>
+    4. Randomly selected child and caregiver<br>
+    5. Mobile household member
+  </p>
+</details>
+<details>
+  <summary>Sample completion by stratum</summary>
+  <p>Sample completion by stratum plus the total sample completion.</p>
+</details>
+<details>
+  <summary>Complete interviews by stratum</summary>
+  <p>Displays progress of complete interviews in each stratum.</p>
+</details>
+<details>
+  <summary>Sample completion Meheba and Mayukwayukwa</summary>
+  <p>Displays the sample completion for stratums Meheba settlements and Mayukwayukwa settlements. Despite registration in settlements, a number of refugees reside informally outside settlements. This results in split households where some members remain in settlement while others reside permanently or semi-permanently outside. As such, within the population of households registered in Meheba and Mayukwayukwa, FDS will distinguish households with mobile members from those without mobile members.</p>
+</details>
+<details>
+  <summary>Expected duration</summary>
+  <p>Shows expected duration of the data collection by stratum, Based on assumptions for the number of interviews per day, the chart shows a date range for the expected completion of data collection.</p>
+</details>
+
+**Outcome**
+
+<details>
+  <summary>Eligible units</summary>
+  <p>
+    An eligible unit is a sample household that meets the survey’s eligibility criteria.<br><br>
+    - For refugee or asylum seeker households: the household head or spouse must be a registered refugee in the geographic stratum from which the household was sampled.<br>
+    - For former refugee households: the head or spouse must be a former refugee registered with the Commission for Refugees in the relevant stratum.<br>
+    - Host community households are considered eligible if they reside in the geographic stratum and neither the head nor the spouse is a refugee or former refugee.
+  </p>
+</details>
+<details>
+  <summary>Total submissions</summary>
+  <p> Total number of submitted interviews.</p>
+</details>
+<details>
+  <summary>Total complete interviews</summary>
+  <p> Total number of interviews that can be considered complete.</p>
+</details>
+<details>
+  <summary>Response rate</summary>
+  <p>
+    Response rate (RR) presented corresponds to RR4 from 
+    <a href="https://aapor.org/wp-content/uploads/2024/03/Standards-Definitions-10th-edition.pdf" target="_blank">
+    The American Association for Public Opinion Research</a>:<br>
+    RR4 = Complete Interviews ÷ (Complete + Refusal + Other + e(Unknown Eligibility))
+  </p>
+</details>
+<details>
+  <summary>Refusal rate</summary>
+  <p>
+    Refusal Rate (REF) presented corresponds to REF2 from 
+    <a href="https://aapor.org/wp-content/uploads/2024/03/Standards-Definitions-10th-edition.pdf" target="_blank">
+    The American Association for Public Opinion Research</a>:<br>
+    REF2 = (Refusal + Break-off) ÷ (All cases where eligibility could have been determined)
+  </p>
+</details>
+<details>
+  <summary>Cooperation rate</summary>
+  <p>
+    Cooperation rate (COOP2) presented corresponds to COOP2 from 
+    <a href="https://aapor.org/wp-content/uploads/2024/03/Standards-Definitions-10th-edition.pdf" target="_blank">
+    The American Association for Public Opinion Research</a>:<br>
+    COOP2 = Complete Interviews ÷ (Complete + Partial + Refusal + Other)
+  </p>
+</details>
+<details>
+  <summary>Replacement need</summary>
+  <p> The replacement need reflects the proportion of interviews that need to be replaced. In Meheba and Mayukwayukwa top-up sampling is used due to the inability to classify households in the footprint frame a-priori. Therefore, replacement procedures were not implemented in the Meheba and Mayukwayukwa strata, interviews from these locations are excluded from the calculation. </p>
+</details>
+<details>
+  <summary>Replacement rate</summary>
+  <p> The replacement need reflects the proportion of interviews that need to be replaced. In Meheba and Mayukwayukwa top-up sampling is used due to the inability to classify households in the footprint frame a-priori. Therefore, replacement procedures were not implemented in the Meheba and Mayukwayukwa strata, interviews from these locations are excluded from the calculation. </p>
+</details>
+<details>
+  <summary>Interview outcome by stratum</summary>
+  <p>Displays the distribution of interview outcomes as a percentage, disaggregated by stratum. Each bar represents the relative share of different outcome categories within the total interviews attempted in that stratum. </p>
+</details>
+<details>
+  <summary>Duplicate IDs</summary>
+  <p>Boxes display the total count of duplicate IDs:</p>
+  <ul>
+    <li><strong>Duplicate IDs</strong>: Number of interviews with repeated interview IDs.</li>
+    <li><strong>Duplicate validation codes for replacements</strong>: Flags repeated use of the same validation code assigned for replacement households.</li>
+    <li><strong>Duplicate sample IDs for replacements</strong>: Detects instances where the same sample ID was used more than once for different replacements.</li>
+  </ul>
+</details>
+
+
+**Data quality**
+
+<details>
+  <summary>Versions</summary>
+  <p>
+    The “current form version” displays the most recent version of the data collection form in use.<br>
+    Each time a revision is made to the form’s structure, a new version is deployed and enumerators are instructed to update to the latest version.
+  </p>
+</details>
+<details>
+  <summary>Distribution of demographic variables</summary>
+  <p>
+    This section presents the distribution of key household composition indicators: total household size, number of adults, and number of children. These histograms help assess the spread and central tendencies of household structures across the sample. Potential outliers are flagged in the "Outliers in key demographic variables" tab.
+  </p>
+</details>
+
+<details>
+  <summary>Mean household size</summary>
+  <p>
+    The violin chart shows the mean household size by week.<br>
+    Household size is defined as the number of individuals listed in the household roster.<br>
+    This metric helps assess whether enumerators may be underreporting household members over time.
+  </p>
+</details>
+<details>
+  <summary>Distribution by country of origin</summary>
+  <p>
+    Charts displays the distribution by country of origin for all complete interviews.</p>
+</details>
+
+<details>
+  <summary>Outliers in numeric variables</summary>
+  <p>
+    Numeric variables with values more than three standard deviations from the global mean are flagged for review.
+  </p>
+</details>
+<details>
+  <summary>Duplicates</summary>
+  <p>
+    This section flags duplicate entries across several fields to identify inconsistencies or potential data integrity issues. These include duplicate names within a household, phone numbers, plot names and social protection programmes.
+  </p>
+</details>
+
+
+**Performance**
+
+<details>
+  <summary>Daily average complete interviews by week</summary>
+  <p>
+    This graph shows the percentage of enumerators grouped by their average number of completed interviews per day, for each week of data collection. Enumerators are categorised into bands based on productivity (e.g. 0–0.5, 0.5–1, 1–1.5 interviews per day), allowing assessment of how fieldwork performance evolves over time.
+  </p>
+</details>
+<details>
+  <summary>Daily average complete interviews by enumerator and week</summary>
+  <p>
+    This graph shows the daily average of completed interview per enumerator and week.
+  </p>
+</details>
+<details>
+  <summary>Enumerator and team summary</summary>
+  <p>
+    Summaries by enumerator and team, including total number of submissons, total number of complete interviews, first and last working day, and working duration as number of days.
+  </p>
+</details>
+
+<details>
+  <summary>Module skips</summary>
+  <p>
+    Enumerators who select “yes” to the initial question(s) in less than 20% of interviews within the 
+    <em>employment</em>, <em>land</em>, <em>health care</em>, <em>social protection</em>, <em>remittances</em>, 
+    or <em>access to justice</em> modules are flagged.<br>
+  </p>
+</details>
+
+<details>
+  <summary>Interview start time</summary>
+  <p>
+    This heat map shows the distribution of interview start times across weeks of data collection. Each cell represents the number of interviews initiated at a specific hour in a given week. Darker shades indicate higher frequencies, allowing identification of patterns and potential irregularities in fieldwork scheduling.
+  </p>
+</details>
+
+<details>
+  <summary>Interviews outside working hours</summary>
+  <p>
+    Interviews that start or end outside the expected working hours (08:00–20:00) are flagged.<br>
+  </p>
+</details>
+
+<details>
+  <summary>Frequent selection of "Don't know"/"Refuse to answer"</summary>
+  <p>
+    Flags enumerators in the top 5% of “Don’t know” or “Refuse to answer” responses and above abslute threshold (5%).
+  </p>
+</details>
+
+<details>
+  <summary>Rare use of "Other/specify"</summary>
+  <p>
+    Flags enumerators in the bottom 10% of “Other, specify” responses.
+  </p>
+</details>
+
+
+**Anthropometrics**
+
+<details>
+<summary>Distribution of anthropometric variables and the sex of the selected child</summary>
+<p>The first set of charts show the distribution of childrens' age (in months), lenght/height, MUAC and weight. The second graph (Sex of the selected child) shows the sex distribution of the children who were measured. </p>
+</details> 
+
+<details>
+<summary>z-scores</summary>
+<p>Interviews where the length/height-for-age, weight-for-age, weight-for-length/height or MUAC-for-age for girls/boys appear incorrect/unlikely based on [WHO](https://www.who.int/tools/child-growth-standards/standards) growth standards are highlighted.</p>
+</details> 
+
+<details>
+<summary>Comparison of child’s age with/without official document: Digit preference</summary>
+<p>Digit preference for child's age, comparing cases where child's age is based on official document vs. without official document.</p>
+</details> 
+
+**Duration**
+
+<details>
+<summary>Timings</summary>
+<p>Mean time of the interview; of the 4 main questionnaires; of each module<p>
+</details> 
+
+**Corrections**
+
+<details>
+<summary>Table of logs</summary>
+<p>These are case-level records of errors or irregularities found in the data, by interview ID. Logs update daily. Possible errors include:</p>
+<ul>
+  <li><b>Duplicate phone number</b>: Flags interviews with duplicate HOH phone number</li>
+  <li><b>Duplicate social protection program</b>: Flags interviews with duplicate social protection programme names in household</li>
+  <li><b>Duplicate plot name</b>: Flags interviews with duplicate plot name in household</li>
+  <li><b>Duplicate sample ID</b>: Flags all duplicate sample ID</li>
+  <li><b>Outlier in numeric variable</b>: Flags interviews with outliers in numeric variable</li>
+  <li><b>Incorrect code in Final_01</b>: Flags interviews where the outcome of the interview was marked with "Complete" or "Partially complete" but based on the data checks the final outcome was marked incorrectly.</li>
+  <li><b>Duplicate in validation code</b>: Flags all duplicates of validation code that is used for replacement</li>
+  <li><b>Duplicate in re-entry of validation code</b>: Flags all duplicates of re-entry of the validation code that is used for replacement</li>
+</ul>
+</details>
+
+**Anthropometrics corrections**
+
+</details>
+<summary>Table of logs</summary>
+<p>These are case-level records of errors or irregularities found in the anthropometric data, by interview ID. Logs update daily. Possible errors include:</p>
+<ul>
+  <li><b>Weight for age</b>: Flags interviews with anthropometric weight-for-age Z-score below -5 or above 5. </li>
+  <li><b>Height for age</b>: Flags interviews with anthropometric height-for-age Z-score below -5 or above 5. </li>
+  <li><b>Weight for height</b>: Flags interviews with anthropometric weight-for-height Z-score below -5 or above 5.</li>
+  <li><b>MUAC for age</b>: Flags interviews with anthropometric MUAC-for-age Z-score below -5 or above 5. </li>
+  <li><b>Incorrect measurement method</b>: Flags interviews where the child was measured incorrectly for their age. If the child is less than 24 months old, they should be measured lying down. If the child is 24 months or older, they should be measured standing. The measurement method should be double-checked and corrected if needed.</li>
+  <li><b>Reported oedema</b>: Flags interviews where oedema was reported.</li>
+</ul>
+</details>
+
+
+**Observations**
+
+<details>
+<summary>Table of logs</summary>
+<p>These are individual cases (per enumerator ID) of irregularities or deviations found in the data. Logs are generated each Sunday for the period of the previous week. Possible issues include:</p>
+<ul>
+  <li><b>Response rate per enumerator in the last week</b>: Flags enumerators whose response rate was less than 90% in the last week</li>
+  <li><b>Refusal rate per enumerator in the last week</b>: Flags enumerators whose refusal rate was more than 5% in the last week</li>
+  <li><b>Household size</b>: Flags enumerators whose mean household size was more than 3 SD from the global mean in the last week</li>
+  <li><b>Total number of adults</b>: Flags enumerators whose mean number of adults in the household was more than 3 SD from the global mean in the last week</li>
+  <li><b>Total number of children</b>: Flags enumerators whose mean number of children in the household was more than 3 SD from the global mean in the last week</li>
+  <li><b>Age of the respondents</b>: Flags enumerators whose average age of the respondents was more than 3 SD from the global mean in the last week</li>
+  <li><b>Sex of the respondents</b>: Flags enumerators whose sex distribution of the respondents was more than 3 SD from the global mean in the last week</li>
+  <li><b>Few cases of Other_specify</b>: Flags enumerators in the 10th percentile of "If other, specify" responses in the last week</li>
+  <li><b>Frequent cases of "Refuse to answer" or "Don't know"</b>: Flags enumerators in the 95th percentile of "Refuse to answer/Don't know" responses and above absolute threshold (5%) in the last week</li>
+  <li><b>Form version</b>: Flags enumerators who used an outdated form version in the last week</li>
+  <li><b>Interviews outside working hours in the past week</b>: Flags enumerators who did more than 5% of interviews outside the working hours in the last week</li>
+  <li><b>Handwashing observations in the past week</b>: Flags enumerators who observed handwashing in less than 90% of interviews in the last week</li>
+  <li><b>Skipped module: Employment</b>: Flags enumerators who skipped the entire Employment module in more than 20% of interviews in the last week</li>
+  <li><b>Skipped module: Health care</b>: Flags enumerators who skipped the entire Health care module in more than 20% of interviews in the last week</li>
+  <li><b>Skipped module: Land & property</b>: Flags enumerators who skipped the entire Land & property module in more than 20% of interviews in the last week</li>
+  <li><b>Skipped module: Shocks</b>: Flags enumerators who skipped the entire Shocks module in more than 20% of interviews in the last week</li>
+  <li><b>Skipped module: Social protection</b>: Flags enumerators who skipped the entire Social protection module in more than 20% of interviews in the last week</li>
+  <li><b>Skipped module: Remittances</b>: Flags enumerators who skipped the entire Remittances module in more than 20% of interviews in the last week</li>
+  <li><b>Skipped module: Access to justice</b>: Flags enumerators who skipped the entire Access to justice module in more than 20% of interviews in the last week</li>
+</ul>
+</details>
+

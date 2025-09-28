@@ -1,0 +1,21 @@
+/*-- scss:defaults --*/
+
+// fonts
+
+$font-family-sans-serif: "Lato";
+
+// colors
+
+$navbar-bg: #DCE9FF;
+$navbar-fg: #18375F;
+
+/*-- scss:rules --*/
+
+.card-header {
+  background-color: #DCE9FF;
+  color: #18375F;
+}
+
+.nav-link{
+  color: #18375F;
+}

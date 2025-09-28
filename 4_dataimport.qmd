@@ -1,0 +1,165 @@
+---
+title: "Data import"
+format: html
+editor: source
+---
+
+```{r}
+
+## Load packages
+if (!requireNamespace("pacman", quietly = TRUE)) {
+install.packages("pacman")
+}
+
+pacman::p_load(readxl, purrr, scales, lubridate, haven, labelled,
+                tidyverse, fusen, plotly,
+               unhcrthemes, DT, bslib, readr, writexl, pins, sparkline, 
+               leaflet, shinyBS, mapboxer, zscorer, rlang, nipnTK, rsconnect, dm, robotoolbox,
+               Microsoft365R)
+```
+
+# Load other functions for QA checks/figures THIS WILL BE REMOVED AS EVERYTHING MOVES TO FUNS.R
+
+```{r}
+load_flat_functions("3_functions/flat_functions_qa_dashboard.qmd", envir = globalenv())
+load_flat_functions("3_functions/flat_functions_qa.qmd", envir = globalenv())
+```
+
+```{r}
+source("1_params.R") # Load parameters
+source("2_funs.R") # Load functions
+source(".Renviron") # Load API keys
+```
+
+# Load and merge data
+
+```{r echo=FALSE}
+.asset_cache <- new.env()
+
+df_raw <- list(
+  data_import(asset_name1),
+  data_import(asset_name2),
+  data_import(asset_name3)
+)
+```
+
+```{r}
+saveRDS(df_raw, "df_raw.rds")
+```
+
+```{r}
+# Call the function to merge dynamically
+df_raw <- merge_all_dataframes_dynamic(df_raw)
+df_raw$hhmain <- df_raw$hhmain |>
+  mutate(source = case_when(
+    source == "1" ~ "Nyanja",
+    source == "2" ~ "Bemba",
+    source == "3" ~ "French/Swahili"
+  ))
+```
+
+# Improve performance
+```{r}
+# Select relevant columns
+params$time_variables_data <- params$time_variables[params$time_variables %in% names(df_raw$hhmain)]
+
+df_raw$hhmain <- df_raw$hhmain |>
+  select(Intro_01, Intro_01a, Intro_06, Intro_06_sampletype,
+         Final_01, `_index`, `_uuid`,
+         source, Hhmove,
+         Intro_16, Intro_17, Intro_18, telHoH, telAdultSelected,
+         Intro_03a_NUTS1, Intro_03b_NUTS2, Intro_03c_NUTS3, 
+         HeadName, HHposinfo, hh_type,
+         start, end, `_submission_time`,
+         Version, Enumerator4trigger, OBS_01_RA_EndTime,
+         HeadAge, age_selected, agerandomwoman, finalcaregiverAGE,
+         HHsize, HeadSex, HH_02_selected, finalcaregiverSEX,
+         m18nAbove, lessthan18F, lessthan18M,
+         BD20_2, BD20_3, BD20_4, BD20_5,
+         H21_1, H21_2, H21_3,
+         SubPov02, SubPov02_2,
+         Intro_18, Intro_07_lbl, Final_04_longitude, Final_04_latitude,
+         params$key_vars, EMP02, EMP03, Land03, Land04, Remit01, Justice01, H01_1, 
+         childnametouse, childnametouseAGE, under5inHH, 
+         childnametouseSEX, AN4, AN5, AN_05a, AN8, AN9, AN9a, AN10_cm, AN10_final_mm, AN11, AN12,
+         immunization_card_agem,
+         #params$vars_assets,
+         params$time_variables_data, Final_01_EndTime,
+         HW2_OB, origincountry,
+         selected_child, childnametousePOSITION, birth_certificate_agem, immunization_card_agem, child_weight, child_height_length,Jmobilemember, migrantavail,
+  random1apwm_migr, random_indexapwm_migr, selected_migrant,
+  rdmigrant, mob_08_nuts4,
+  )
+
+df_raw$hhroster <- df_raw$hhroster |> 
+  select(Intro_01, Intro_01a, Intro_06, Final_01, 
+         start, end, `_submission_time`,
+         `_index`, `_uuid`, Intro_03a_NUTS1, Intro_03b_NUTS2, Intro_03c_NUTS3, 
+         HeadName, HH_02, HHposinfo, HH_04, HH_01b, relchoice, memberPosition)
+
+df_raw$HHmemberInfo <- df_raw$HHmemberInfo  |>
+  select(`_uuid`, Intro_01, Intro_01a, Intro_06, Final_01, 
+         start, end, `_submission_time`,
+         agetouse, HH02, HH_02)
+
+df_raw$plot_roster_info <- df_raw$plot_roster_info |>
+  select(`_uuid`, currentplot, Intro_01, Intro_01a, Intro_06, Final_01, 
+         HeadName,
+          Intro_03a_NUTS1, Intro_03b_NUTS2, Intro_03c_NUTS3, 
+         start, end, `_submission_time`,
+         Land19a, Land19b, `_parent_index`, `_index`)
+
+df_raw$ScProtec02_group <- df_raw$ScProtec02_group |>
+  select(`_uuid`, ScProtec02, Intro_01, Intro_01a, Intro_06, Final_01, 
+         HeadName,
+         Intro_03a_NUTS1, Intro_03b_NUTS2, Intro_03c_NUTS3, 
+        start, end, `_submission_time`, `_parent_index`, `_index`)
+
+df_raw$gp_migrant <- df_raw$gp_migrant |> 
+  select(any_of(c(
+    "_uuid", "_index", "_parent_index",
+    "migrantName", "migrantmemb", "migrantaway", "ID_09MM",
+    "ID_17bMM", "ID_17cMM", "ID_17dMM", "migrantB", "migrantmembBck",
+    "migrantback", "selectnig", "selectmigpos", "gp_migrantaway",
+    "notemigrant1", "notemigrant2", "Mob_00d", "Mob_01", "othercountry_Mob_01",
+    "Mob_01a", "Mob_01b", "Mob_01c", "Mob_01d", "Mob_04", "notemob_04",
+    "Mob_04_year", "Mob_04_month", "Mob_05", "Mob_06", "Mob_06a",
+    "note_mob_06a", "Mob_06a_Year", "Mob_06a_Month", "Mob_07",
+    "othercountry_Mob_07", "Mob_08", "note_Mob_08", "Mob_08_province",
+    "Mob_08_county", "Mob_08_district", "Mob_08_village",
+    "Mob_08_district_label", "Mob_08_village_label", "Mob_08_districtvillage",
+    "Mob_09", "Mob_09a", "Mob_10", "Mob_11", "Mob_12", "Mob_12_phone",
+    "gp_migrantback", "notemback", "Mob_13", "Mob_14", "othercountry_Mob_14",
+    "Mob_14a", "Mob_14b", "Mob_14c", "Mob_14d", "Mob_15", "note_mob15",
+    "Mob_15_year", "Mob_15_month", "Mob_16", "notemob_16",
+    "Mob_16_year", "Mob_16_month", "Mob_17", "Mob_18", "Mob_19",
+    "othercountry_Mob_19", "Mob_20", "note_Mob_20", "Mob_20_province",
+    "Mob_20_county", "Mob_20_district", "Mob_20_village",
+    "Mob_21", "Mob_22", "Mob_23", "Mob_23_phonemob", "Final_Lang", "Final_Lang_specify"
+  )))
+
+df_raw$id <- df_raw$id |> 
+  select(`_uuid`, ID_11_picture)
+
+df_raw <- df_raw[!names(df_raw) %in% c("rosterPart2")]
+```
+
+```{r}
+# Check size of list:
+size_in_mb <- object.size(df_raw) / (1024^2)
+print(paste("Size in MB:", round(size_in_mb, 2)))
+
+# Calculate and print the size of each object in the list `qa`
+sizes <- sapply(df_raw, function(x) object.size(x) / (1024^2))
+sizes_rounded <- round(sizes, 2)
+
+# Print sizes
+print(sizes_rounded)
+```
+
+```{r}
+## Save pin to Posit connect server
+#API key saved in .Renviron
+board <- board_connect(auth = "envvar")
+pin_write(board, df_raw, "XXX.org/FDS_ZAM_qa_raw", type = "rds")
+```
